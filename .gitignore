@@ -1,0 +1,9 @@
+.env
+*.db
+__pycache__/
+agent/certs/*.crt
+!agent/certs/.keep
+.env.bak*
+*.tgz
+leaddata.tgz
+workspace.tgz

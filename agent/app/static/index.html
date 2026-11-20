@@ -1,0 +1,281 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI DevTeam</title>
+<style>
+  :root { --bg:#0f1218; --panel:#171b24; --line:#262c3a; --text:#d8dde8; --mute:#8590a6; --acc:#5b9cff;
+          --ok:#3fb950; --bad:#f85149; --warn:#d29922; }
+  * { box-sizing:border-box }
+  body { margin:0; font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; background:var(--bg); color:var(--text);
+         height:100vh; display:grid; grid-template-rows:auto 1fr; }
+  header { display:flex; gap:10px; align-items:center; padding:10px 16px; border-bottom:1px solid var(--line); flex-wrap:wrap }
+  header h1 { font-size:16px; margin:0 12px 0 0 }
+  .agent { display:flex; align-items:center; gap:6px; padding:4px 10px; border:1px solid var(--line); border-radius:14px;
+           background:var(--panel); font-size:12px }
+  .dot { width:8px; height:8px; border-radius:50%; background:var(--mute) }
+  .dot.ok { background:var(--ok) } .dot.busy { background:var(--warn); animation:pulse 1s infinite } .dot.down { background:var(--bad) }
+  @keyframes pulse { 50% { opacity:.3 } }
+  main { display:grid; grid-template-columns:300px 1fr 380px; min-height:0 }
+  aside, section { min-height:0; overflow:auto; border-right:1px solid var(--line) }
+  #tasks .t { padding:10px 14px; border-bottom:1px solid var(--line); cursor:pointer }
+  #tasks .t:hover, #tasks .t.sel { background:var(--panel) }
+  .t .ttl { font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis }
+  .t .meta { color:var(--mute); font-size:12px }
+  .badge { display:inline-block; padding:0 6px; border-radius:8px; font-size:11px; border:1px solid var(--line) }
+  .s-running,.s-queued { color:var(--warn) } .s-done { color:var(--ok) } .s-failed,.s-cancelled,.s-interrupted { color:var(--bad) }
+  .s-done_no_push { color:var(--warn) } .s-ci_failed { color:var(--bad) }
+  .ev.k-ci { border-left-color:var(--warn) }
+  #center { display:grid; grid-template-rows:auto 1fr auto; min-height:0 }
+  #head { padding:10px 16px; border-bottom:1px solid var(--line) }
+  #head .stage { color:var(--mute); font-size:12px }
+  #log { overflow:auto; padding:10px 16px }
+  .ev { margin:6px 0; padding:8px 10px; border-radius:8px; background:var(--panel); border-left:3px solid var(--line);
+        white-space:pre-wrap; word-break:break-word }
+  .ev .h { font-size:11px; color:var(--mute); margin-bottom:2px }
+  .ev.user { border-left-color:var(--acc) } .ev.lead { border-left-color:#a371f7 }
+  .ev.k-error { border-left-color:var(--bad) } .ev.k-done,.ev.k-gitlab { border-left-color:var(--ok) }
+  .ev.k-shell, .ev.k-step, .ev.k-thought, .ev.k-file { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12px; opacity:.85 }
+  .ev.k-final { border-left-color:var(--ok); background:#13221a }
+  .ev.k-report { border-left-color:var(--acc); background:#0d1420; font-family:ui-monospace,Menlo,Consolas,monospace;
+                 font-size:12px; white-space:pre; overflow-x:auto }
+  .ev.k-usage { font-family:ui-monospace,monospace; font-size:12px; opacity:.75 }
+  .r-architect{color:#79c0ff}.r-backend{color:#ffa657}.r-frontend{color:#ff7b72}.r-qa{color:#d2a8ff}.r-devops{color:#56d364}.r-lead{color:#a371f7}.r-user{color:var(--acc)}
+  form { display:flex; gap:8px; padding:10px 16px; border-top:1px solid var(--line) }
+  textarea { flex:1; min-height:64px; max-height:240px; resize:vertical; background:var(--panel); color:var(--text);
+             border:1px solid var(--line); border-radius:8px; padding:8px; font:inherit }
+  button { background:var(--acc); color:#fff; border:0; border-radius:8px; padding:8px 14px; cursor:pointer; font-weight:600 }
+  button.sec { background:var(--panel); border:1px solid var(--line); color:var(--text) }
+  button:disabled { opacity:.5; cursor:default }
+  #files { padding:8px 0 }
+  #files .f { padding:3px 14px; cursor:pointer; font-family:ui-monospace,monospace; font-size:12px; color:var(--mute) }
+  #files .f:hover { color:var(--text); background:var(--panel) }
+  #viewer { white-space:pre; overflow:auto; font:12px ui-monospace,monospace; padding:10px 14px; border-top:1px solid var(--line);
+            max-height:55vh; background:#0b0e13 }
+  .filters { display:flex; gap:10px; color:var(--mute); font-size:12px; padding:6px 16px; border-bottom:1px solid var(--line) }
+  a { color:var(--acc) }
+  .t { position:relative }
+  .t .del { position:absolute; top:8px; right:8px; display:none; background:transparent; border:1px solid var(--line);
+            color:var(--mute); padding:0 7px; border-radius:6px; font-weight:400; line-height:20px }
+  .t:hover .del { display:block } .t .del:hover { color:var(--bad); border-color:var(--bad) }
+  .t .ttl { padding-right:26px }
+  .t input.pick { display:none; margin-right:6px } body.selmode .t input.pick { display:inline-block }
+  body.selmode .t .del { display:none !important }
+  #bulk { display:none; gap:6px; padding:8px 14px; border-bottom:1px solid var(--line); flex-wrap:wrap; font-size:12px }
+  body.selmode #bulk { display:flex }
+  button.danger { background:var(--bad) } button.sm { padding:4px 8px; font-size:12px; font-weight:500 }
+  .side-h { padding:10px 14px; font-weight:600; border-bottom:1px solid var(--line); display:flex; justify-content:space-between; align-items:center }
+</style>
+</head>
+<body>
+<header>
+  <h1>🤖 AI DevTeam</h1>
+  <div id="team"></div>
+</header>
+<main>
+  <aside>
+    <div class="side-h">Tasks <span style="display:flex;gap:6px">
+      <button class="sec sm" onclick="toggleSel()" title="Select several tasks to delete">☑</button>
+      <button class="sec" onclick="newTask()">+ New</button></span></div>
+    <div id="bulk">
+      <button class="sec sm" onclick="pickAll(true)">select all</button>
+      <button class="sec sm" onclick="pickAll(false)">clear</button>
+      <button class="sec sm" onclick="pickFailed()">select failed</button>
+      <button class="danger sm" onclick="deletePicked()">🗑 delete selected (<span id="pickN">0</span>)</button>
+      <button class="sec sm" onclick="toggleSel()">done</button>
+    </div>
+    <div id="tasks"></div>
+  </aside>
+  <section id="center">
+    <div id="head"><div id="title"><b>New task for the Team Lead</b></div><div class="stage" id="stage">
+      Describe the product: what it should do, constraints, preferred stack. The team plans it, designs it, writes the code,
+      tests it and pushes it to GitLab.</div></div>
+    <div style="display:flex;flex-direction:column;min-height:0">
+      <div class="filters">
+        <label><input type="checkbox" id="fDetail" checked onchange="rerender()"> agent details (thoughts, commands)</label>
+        <label><input type="checkbox" id="fAuto" checked> auto-scroll</label>
+      </div>
+      <div id="log"></div>
+    </div>
+    <form id="f" onsubmit="send(event)">
+      <textarea id="prompt" placeholder="E.g.: Build a REST service + web page for managing a task list (CRUD, filters by status), with SQLite storage and tests."></textarea>
+      <div style="display:flex;flex-direction:column;gap:6px">
+        <button id="sendBtn">Send to Team Lead</button>
+        <button type="button" class="sec" id="cancelBtn" onclick="cancelTask()" style="display:none">Stop</button>
+        <button type="button" class="sec" id="ciBtn" onclick="checkCi()" style="display:none" title="Check the pipeline status and fix errors automatically">🔧 CI</button>
+        <button type="button" class="sec" id="delBtn" onclick="cur && deleteTask(cur.id)" style="display:none" title="Delete this task">🗑 Delete</button>
+      </div>
+    </form>
+  </section>
+  <aside style="border-right:0">
+    <div class="side-h">Project files <button class="sec" onclick="loadFiles()">⟳</button></div>
+    <div id="gl" style="padding:6px 14px"></div>
+    <div id="files"></div>
+    <div id="viewer" style="display:none"></div>
+  </aside>
+</main>
+<script>
+const ROLE_NAMES = {lead:"Team Lead", architect:"Architect", backend:"Backend", frontend:"Frontend", qa:"QA", devops:"DevOps", user:"You"};
+const STATUS = {queued:"queued", running:"running", done:"done", done_no_push:"done (no push)", ci_failed:"CI failed", failed:"failed", cancelled:"cancelled", interrupted:"interrupted"};
+const DETAIL = new Set(["step","thought","shell","file","usage"]);
+let cur = null, es = null, events = [];
+
+const $ = s => document.querySelector(s);
+const esc = s => (s ?? "").toString().replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+const fmtT = ts => new Date(ts * 1000).toLocaleTimeString();
+async function api(p, opt) { const r = await fetch(p, opt); if (!r.ok) throw new Error(await r.text()); return r.json(); }
+
+async function loadTeam() {
+  try {
+    const t = await api("/api/team");
+    $("#team").innerHTML = Object.entries(ROLE_NAMES).filter(([k]) => k !== "user").map(([k, n]) => {
+      const a = t[k] || {}; const cls = !a.ok ? "down" : a.busy ? "busy" : "ok";
+      return `<span class="agent" title="${a.task_id ? "busy: " + a.task_id : ""}"><span class="dot ${cls}"></span><span class="r-${k}">${n}</span></span>`;
+    }).join(" ");
+  } catch (e) {}
+}
+
+async function loadTasks() {
+  const ts = await api("/api/tasks");
+  TASKS = ts;
+  const running = s => ["running", "queued"].includes(s);
+  $("#tasks").innerHTML = ts.map(t => `<div class="t ${cur && cur.id === t.id ? "sel" : ""}" onclick="taskClick(event,'${t.id}')">
+      ${running(t.status) ? "" : `<button class="del" title="Delete task" onclick="event.stopPropagation(); deleteTask('${t.id}')">🗑</button>`}
+      <div class="ttl"><input type="checkbox" class="pick" data-id="${t.id}" ${PICK.has(t.id) ? "checked" : ""}
+           ${running(t.status) ? "disabled title='running — cannot delete'" : ""}
+           onclick="event.stopPropagation(); pick('${t.id}', this.checked)">${esc(t.title)}</div>
+      <div class="meta"><span class="badge s-${t.status}">${STATUS[t.status] || t.status}</span> ${esc(t.project_name || "")}
+      <br>${new Date(t.created * 1000).toLocaleString()}</div></div>`).join("") || `<div class="t meta">No tasks yet</div>`;
+  if (cur) { const t = ts.find(x => x.id === cur.id); if (t) { cur = {...cur, ...t}; renderHead(); } }
+}
+
+let TASKS = [], PICK = new Set();
+const FAILED = ["failed", "cancelled", "interrupted", "done_no_push", "ci_failed"];
+function taskClick(ev, id) {
+  if (document.body.classList.contains("selmode")) {
+    const t = TASKS.find(x => x.id === id);
+    if (t && !["running", "queued"].includes(t.status)) { pick(id, !PICK.has(id)); loadTasks(); }
+    return;
+  }
+  openTask(id);
+}
+function pick(id, on) { on ? PICK.add(id) : PICK.delete(id); $("#pickN").textContent = PICK.size; }
+function toggleSel() { document.body.classList.toggle("selmode"); PICK.clear(); $("#pickN").textContent = 0; loadTasks(); }
+function pickAll(on) { PICK.clear(); if (on) TASKS.filter(t => !["running","queued"].includes(t.status)).forEach(t => PICK.add(t.id));
+                        $("#pickN").textContent = PICK.size; loadTasks(); }
+function pickFailed() { PICK.clear(); TASKS.filter(t => FAILED.includes(t.status)).forEach(t => PICK.add(t.id));
+                        $("#pickN").textContent = PICK.size; loadTasks(); }
+async function afterDelete(ids) {
+  if (cur && ids.includes(cur.id)) newTask();
+  PICK.clear(); $("#pickN").textContent = 0; await loadTasks();
+}
+async function deleteTask(id) {
+  const t = TASKS.find(x => x.id === id);
+  if (!confirm(`Delete task «${t ? t.title : id}»?\nIts history and working files on the server will be deleted.\nThe repository in GitLab/GitHub is NOT touched.`)) return;
+  try { await fetch(`/api/tasks/${id}`, {method: "DELETE"}).then(r => { if (!r.ok) return r.text().then(x => { throw new Error(x); }); });
+        await afterDelete([id]); } catch (e) { alert(e.message); }
+}
+async function deletePicked() {
+  if (!PICK.size) return;
+  if (!confirm(`Delete selected tasks: ${PICK.size}?\nThe history and working files will be deleted. Repositories in GitLab/GitHub are NOT touched.`)) return;
+  try { const r = await api("/api/tasks/delete", {method: "POST", headers: {"Content-Type": "application/json"},
+                                                   body: JSON.stringify({ids: [...PICK]})});
+        if (r.skipped_running.length) alert("Skipped (running): " + r.skipped_running.join(", "));
+        await afterDelete(r.deleted); } catch (e) { alert(e.message); }
+}
+
+function renderHead() {
+  if (!cur) return;
+  $("#title").innerHTML = `<b>${esc(cur.title)}</b> <span class="badge s-${cur.status}">${STATUS[cur.status] || cur.status}</span>`;
+  $("#stage").textContent = `stage: ${cur.stage || "-"}   ·   ${cur.project_name || ""}   ·   ${cur.id}`;
+  const running = ["running", "queued"].includes(cur.status);
+  $("#cancelBtn").style.display = running ? "" : "none";
+  $("#delBtn").style.display = running ? "none" : "";
+  $("#ciBtn").style.display = (!running && cur.gitlab_url) ? "" : "none";
+  $("#sendBtn").textContent = cur ? "Send revision" : "Send to Team Lead";
+  $("#sendBtn").disabled = running;
+  $("#prompt").placeholder = running ? "The team is working… wait for it to finish, then you can send a revision"
+                                      : "Revision / new request for this project (the team will change the existing code)";
+  $("#gl").innerHTML = cur.gitlab_url ? `🦊 <a href="${esc(cur.gitlab_url)}" target="_blank">${esc(cur.gitlab_url)}</a>` : "";
+}
+
+function evHTML(e) {
+  const k = e.kind, r = e.role;
+  let extra = "";
+  if (k === "gitlab" && e.extra && e.extra.web_url) extra = `\n<a href="${esc(e.extra.web_url)}" target="_blank">${esc(e.extra.web_url)}</a>`;
+  if (k === "report") extra = `\n<button class="sec sm" onclick="copyReport(${e.id})">📋 copy</button> <button class="sec sm" onclick="downloadReport(${e.id})">⬇ .txt</button>`;
+  return `<div class="ev ${r} k-${k}"><div class="h"><b class="r-${r}">${ROLE_NAMES[r] || r}</b> · ${k} · ${fmtT(e.ts)}</div>${esc(e.message)}${extra}</div>`;
+}
+function rerender() {
+  const detail = $("#fDetail").checked;
+  $("#log").innerHTML = events.filter(e => detail || !DETAIL.has(e.kind)).map(evHTML).join("");
+  if ($("#fAuto").checked) $("#log").scrollTop = 1e9;
+}
+
+async function openTask(id) {
+  cur = await api(`/api/tasks/${id}`); events = [];
+  renderHead(); rerender(); loadTasks(); loadFiles(); $("#viewer").style.display = "none";
+  if (es) es.close();
+  es = new EventSource(`/api/tasks/${id}/events`);
+  es.onmessage = m => {
+    const e = JSON.parse(m.data); events.push(e);
+    if ($("#fDetail").checked || !DETAIL.has(e.kind)) {
+      $("#log").insertAdjacentHTML("beforeend", evHTML(e));
+      if ($("#fAuto").checked) $("#log").scrollTop = 1e9;
+    }
+    if (["file", "done", "gitlab", "final"].includes(e.kind)) scheduleFiles();
+    if (["assign", "done", "qa", "ci", "final", "report", "error", "warn", "plan"].includes(e.kind)) loadTasks();
+  };
+}
+
+let ft = null; function scheduleFiles() { clearTimeout(ft); ft = setTimeout(loadFiles, 1500); }
+async function loadFiles() {
+  if (!cur) { $("#files").innerHTML = ""; return; }
+  const fs = await api(`/api/tasks/${cur.id}/files`);
+  $("#files").innerHTML = fs.map(f => `<div class="f" onclick="viewFile('${encodeURIComponent(f.path)}')">${esc(f.path)} <span style="opacity:.5">${f.size}</span></div>`).join("")
+                          || `<div class="f">(empty for now)</div>`;
+}
+async function viewFile(p) {
+  const f = await api(`/api/tasks/${cur.id}/file?path=${p}`);
+  $("#viewer").style.display = ""; $("#viewer").textContent = `── ${f.path} ──\n\n` + f.content;
+}
+
+function newTask() {
+  cur = null; events = []; if (es) es.close(); es = null;
+  $("#title").innerHTML = "<b>New task for the Team Lead</b>"; $("#stage").textContent = "Describe the product you need.";
+  $("#log").innerHTML = ""; $("#files").innerHTML = ""; $("#gl").innerHTML = ""; $("#viewer").style.display = "none";
+  $("#cancelBtn").style.display = "none"; $("#delBtn").style.display = "none"; $("#sendBtn").disabled = false; $("#sendBtn").textContent = "Send to Team Lead";
+  $("#prompt").placeholder = "E.g.: Build a REST service + web page for managing a task list…"; loadTasks();
+}
+
+async function send(ev) {
+  ev.preventDefault();
+  const prompt = $("#prompt").value.trim(); if (!prompt) return;
+  $("#sendBtn").disabled = true;
+  try {
+    if (cur) { await api(`/api/tasks/${cur.id}/followup`, {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({prompt})});
+               $("#prompt").value = ""; await loadTasks(); renderHead(); }
+    else { const t = await api("/api/tasks", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({prompt})});
+           $("#prompt").value = ""; await openTask(t.id); }
+  } catch (e) { alert(e.message); $("#sendBtn").disabled = false; }
+}
+function reportText(id) { const e = events.find(x => x.id === id); return e ? e.message : ""; }
+function copyReport(id) { navigator.clipboard.writeText(reportText(id)).then(() => {}, () => alert("Copying is not available (needs https/localhost)")); }
+function downloadReport(id) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([reportText(id)], {type: "text/plain;charset=utf-8"}));
+  a.download = `report-${cur ? cur.id : "task"}.txt`; a.click(); URL.revokeObjectURL(a.href);
+}
+async function checkCi() {
+  if (!cur) return;
+  try { await api(`/api/tasks/${cur.id}/ci`, {method: "POST"}); await loadTasks(); renderHead(); }
+  catch (e) { alert(e.message); }
+}
+async function cancelTask() { if (cur && confirm("Stop the team's work on this task?")) await api(`/api/tasks/${cur.id}/cancel`, {method:"POST"}); }
+
+$("#prompt").addEventListener("keydown", e => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) send(e); });
+loadTeam(); loadTasks(); setInterval(loadTeam, 4000); setInterval(loadTasks, 8000);
+</script>
+</body>
+</html>

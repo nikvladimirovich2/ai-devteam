@@ -1,0 +1,109 @@
+# AI DevTeam: 6 role agents (each in its own container, with its own API key).
+# Values come from .env (compose interpolation). Each container gets ONLY its own key;
+# the GIT_TOKEN is given only to devops. Agents have a shell, so isolation matters.
+x-llm-env: &llm-env
+  LLM_MODEL: ${LLM_MODEL:-}
+  LLM_BASE_URL: ${LLM_BASE_URL:-}
+  LLM_TEMPERATURE: ${LLM_TEMPERATURE:-0.2}
+  LLM_MAX_TOKENS: ${LLM_MAX_TOKENS:-0}
+  LLM_CONTEXT_WINDOW: ${LLM_CONTEXT_WINDOW:-0}
+  LLM_TIMEOUT: ${LLM_TIMEOUT:-600}
+  LLM_SSL_VERIFY_DISABLE: ${LLM_SSL_VERIFY_DISABLE:-0}
+  LLM_FUNCTION_CALLING: ${LLM_FUNCTION_CALLING:-auto}
+  AGENT_MAX_ITER: ${AGENT_MAX_ITER:-40}
+  SHELL_TIMEOUT: ${SHELL_TIMEOUT:-300}
+  LEAD_URL: http://lead:8000
+  WORKSPACE: /workspace
+
+x-agent: &agent
+  build: ./agent
+  image: devteam-agent:latest
+  restart: unless-stopped
+  volumes:
+    - workspace:/workspace          # shared working directory of the projects
+  networks: [team]
+
+services:
+  lead:
+    <<: *agent
+    container_name: devteam-lead
+    environment:
+      <<: *llm-env
+      ROLE: lead
+      LEAD_MODEL: ${LEAD_MODEL:-}
+      LEAD_API_KEY: ${LEAD_API_KEY:-}
+      MAX_QA_ROUNDS: ${MAX_QA_ROUNDS:-2}
+      MAX_CI_ROUNDS: ${MAX_CI_ROUNDS:-3}
+      GIT_PROVIDER: ${GIT_PROVIDER:-}
+      GIT_URL: ${GIT_URL:-}
+      UI_USER: ${UI_USER:-}
+      UI_PASSWORD: ${UI_PASSWORD:-}
+      DB_PATH: /data/devteam.db
+    volumes:
+      - workspace:/workspace
+      - leaddata:/data
+    ports:
+      - "${UI_BIND:-127.0.0.1}:${UI_PORT:-8080}:8000"
+
+  architect:
+    <<: *agent
+    container_name: devteam-architect
+    environment:
+      <<: *llm-env
+      ROLE: architect
+      ARCHITECT_MODEL: ${ARCHITECT_MODEL:-}
+      ARCHITECT_API_KEY: ${ARCHITECT_API_KEY:-}
+
+  backend:
+    <<: *agent
+    container_name: devteam-backend
+    environment:
+      <<: *llm-env
+      ROLE: backend
+      BACKEND_MODEL: ${BACKEND_MODEL:-}
+      BACKEND_API_KEY: ${BACKEND_API_KEY:-}
+
+  frontend:
+    <<: *agent
+    container_name: devteam-frontend
+    environment:
+      <<: *llm-env
+      ROLE: frontend
+      FRONTEND_MODEL: ${FRONTEND_MODEL:-}
+      FRONTEND_API_KEY: ${FRONTEND_API_KEY:-}
+
+  qa:
+    <<: *agent
+    container_name: devteam-qa
+    environment:
+      <<: *llm-env
+      ROLE: qa
+      QA_MODEL: ${QA_MODEL:-}
+      QA_API_KEY: ${QA_API_KEY:-}
+
+  devops:
+    <<: *agent
+    container_name: devteam-devops
+    environment:
+      <<: *llm-env
+      ROLE: devops
+      DEVOPS_MODEL: ${DEVOPS_MODEL:-}
+      DEVOPS_API_KEY: ${DEVOPS_API_KEY:-}
+      GIT_PROVIDER: ${GIT_PROVIDER:-}
+      GIT_URL: ${GIT_URL:-}
+      GIT_TOKEN: ${GIT_TOKEN:-}
+      GIT_NAMESPACE: ${GIT_NAMESPACE:-}
+      GIT_DEFAULT_BRANCH: ${GIT_DEFAULT_BRANCH:-main}
+      GIT_VISIBILITY: ${GIT_VISIBILITY:-private}
+      GIT_SSL_VERIFY_DISABLE: ${GIT_SSL_VERIFY_DISABLE:-0}
+      CI_WAIT_TIMEOUT: ${CI_WAIT_TIMEOUT:-1200}
+      CI_POLL_INTERVAL: ${CI_POLL_INTERVAL:-15}
+      GIT_AUTHOR_NAME: ${GIT_AUTHOR_NAME:-AI DevTeam}
+      GIT_AUTHOR_EMAIL: ${GIT_AUTHOR_EMAIL:-ai-devteam@example.com}
+
+volumes:
+  workspace:
+  leaddata:
+
+networks:
+  team:

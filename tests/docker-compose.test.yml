@@ -1,0 +1,25 @@
+# Smoke-test stack: mock LLM + local GitLab CE.  Usage:
+#   docker compose -f docker-compose.yml -f tests/docker-compose.test.yml up -d --build
+services:
+  mockllm:
+    image: devteam-agent:latest
+    container_name: devteam-mockllm
+    command: ["python", "-m", "uvicorn", "mock_llm:app", "--host", "0.0.0.0", "--port", "9000", "--app-dir", "/tests"]
+    volumes: ["./tests:/tests:ro"]
+    networks: [team]
+    healthcheck: { test: ["CMD", "curl", "-fs", "http://localhost:9000/v1/models"], interval: 10s }
+
+  gitlab:
+    image: gitlab/gitlab-ce:19.5.8-ce.0
+    container_name: devteam-test-gitlab
+    hostname: gitlab
+    shm_size: 256m
+    environment:
+      GITLAB_ROOT_PASSWORD: "${TEST_GITLAB_ROOT_PASSWORD:?set TEST_GITLAB_ROOT_PASSWORD}"
+      GITLAB_OMNIBUS_CONFIG: |
+        external_url 'http://gitlab'
+        prometheus_monitoring['enable'] = false
+        puma['worker_processes'] = 0
+        sidekiq['concurrency'] = 5
+    ports: ["127.0.0.1:8929:80"]
+    networks: [team]
