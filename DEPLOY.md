@@ -2,6 +2,9 @@
 
 Step-by-step installation of AI DevTeam on a clean host. Takes ~15 minutes plus image build time (~5 min).
 
+**Windows?** Run it with the WSL container CLI (`wslc`), no Docker Desktop needed: see
+[11. Windows: WSL containers (wslc)](#11-windows-wsl-containers-wslc).
+
 ## 1. Requirements
 
 | | Minimum | Recommended |
@@ -55,6 +58,7 @@ Required:
 | `GIT_URL` | `https://gitlab.corp.local` or `https://github.com` | provider is detected from the URL |
 | `GIT_TOKEN` | | see «Git tokens» below |
 | `GIT_NAMESPACE` | `ai-team` | GitLab group (required) / GitHub org (empty = personal account) |
+| `INTERNAL_SECRET` | `openssl rand -hex 32` | ≥ 32 characters; signs the requests between the containers (see below) |
 
 Recommended:
 
@@ -65,6 +69,27 @@ Recommended:
 
 > **`$` in values.** Compose expands `$VAR` inside `.env`. A key containing `$` must be in single quotes:
 > `QA_API_KEY='$abc#def'`, otherwise part of it is silently dropped.
+
+### Isolation of the agents
+
+The agents run shell commands the model writes, and a prompt injection (a README of a package, a web
+page, the task text) can make the model run anything. Two layers keep the keys and the Git token away
+from those commands:
+
+- **Separate shell user.** The service runs as `agent` (uid 1000) and holds the role's API key (and,
+  in `devops`, `GIT_TOKEN`). Every command from `run_shell` runs as `runner` (uid 1001) with a clean
+  environment, so `/proc/<pid>/environ` and the memory of the agent are not readable. Both users
+  share a group, so both can edit the project files. The Git token is passed to `git push` through
+  the environment, never on the command line (`/proc/<pid>/cmdline` is readable by every user).
+- **Signed internal requests.** The lead and the workers sign every internal request with a per-role
+  HMAC token derived from `INTERNAL_SECRET`. Without it, `POST devops:8000/publish` and
+  `POST lead:8000/api/internal/events` return `403`, so a command cannot publish under the DevOps
+  token or post a fake `✅ pushed` event. The role of an event is taken from the token, not from
+  the request body. A worker only holds its own token; the secret itself stays in the lead.
+
+`scripts/check.sh` verifies both (`shell user cannot read the agent environment`, `internal
+endpoints reject unsigned calls`). Still: give the token only the rights it needs, preferably for
+a separate org / account.
 
 ### Git tokens
 
@@ -170,3 +195,139 @@ docker run --rm -v devteam_workspace:/d -v $PWD:/b alpine tar czf /b/workspace.t
 | `⚠ CI: no_pipeline` | no CI config pushed, CI disabled in the project, or no runners |
 | CI red after `MAX_CI_ROUNDS` | open the task → **🔧 CI** to run more fix rounds, or fix manually |
 | Lead container `unhealthy`, UI frozen | `docker compose logs lead`; `docker compose restart lead` (running task becomes `interrupted`) |
+| `INTERNAL_SECRET is missing or shorter than 32 characters` | add `INTERNAL_SECRET=$(openssl rand -hex 32)` to `.env`, `docker compose up -d` |
+| `403 internal endpoint` in the logs | containers started with different `INTERNAL_SECRET` values (old containers): recreate all with `docker compose up -d --force-recreate` |
+
+## 11. Windows: WSL containers (wslc)
+
+`wslc.exe` is the container CLI built into WSL. It runs the same image in a lightweight Linux VM,
+without Docker Desktop. Tested on Windows 10 22H2 (build 19044) with WSL 3.0.3.
+
+### 11.1 Requirements
+
+| | Minimum | Notes |
+|---|---|---|
+| Windows | Windows 10 2004+ (build 19041) or Windows 11, x64 | |
+| WSL | **3.0.1 or newer** (`wsl --version`) | `wslc` ships with WSL, nothing else to install |
+| Virtualization | VT-x/AMD-V in the BIOS + the «Virtual Machine Platform» feature | inside a VM: nested virtualization |
+| RAM | 8 GB on the host | measured: ~2 GB for the 6 idle agents. The wslc VM gets 4 GB by default (`wslc settings`); with pip/npm/pytest running in parallel raise it to 6 GB |
+| Disk | 10 GB free on the drive with `%LOCALAPPDATA%\wslc` | image 1.66 GB, the VM disk `storage.vhdx` grows to ~3.3 GB after the build, plus projects and caches |
+| Software | PowerShell 5.1+ (built in), git | `docker` / `docker compose` are **not** needed |
+| Network | the LLM endpoint, GitLab/GitHub, pypi.org, registry.npmjs.org | the VM uses the Windows network, including VPN |
+
+The LLM is not part of the stack: a laptop without a GPU works fine as long as `LLM_BASE_URL` points to a model server.
+
+### 11.2 Install / update WSL
+
+In PowerShell **as administrator**, only if WSL has never been installed:
+
+```powershell
+wsl --install --no-distribution     # enables «Virtual Machine Platform»; restart Windows afterwards
+```
+
+Then (as a normal user):
+
+```powershell
+wsl --update
+wsl --version                       # WSL version: 3.0.1 or newer
+wslc version
+wslc run --rm hello-world           # smoke test of the container runtime
+```
+
+### 11.3 Get the code and configure
+
+```powershell
+cd $HOME
+git clone https://github.com/<you>/ai-devteam.git
+cd ai-devteam
+copy .env.example .env
+notepad .env
+```
+
+Fill in `.env` as described in [4. Configure `.env`](#4-configure-env). Windows specifics:
+
+- `INTERNAL_SECRET` may stay empty: the start script generates it and writes it into `.env`.
+- Values are read literally by the script, so `$` in keys needs no quoting (quotes are still accepted).
+- Port 8080 is often busy on a developer machine: set e.g. `UI_PORT=8099`.
+  `netstat -ano | findstr :8099` shows whether the port is free.
+- Corporate certificates go to `agent\certs\*.crt`, as on Linux.
+- Do not commit `.env`. It is in `.gitignore`. To restrict it to your user: `icacls .env /inheritance:r /grant:r "$($env:USERNAME):F"`.
+- Git with `core.autocrlf=true` (the Git for Windows default) checks the files out with CRLF.
+  This was tested: the image builds and runs. The script writes the per-role env files with LF itself.
+
+### 11.4 Start
+
+wslc has no `compose` yet, so `scripts\wslc-up.ps1` does what `docker-compose.yml` does: one network
+`devteam`, volumes `devteam_workspace` and `devteam_leaddata`, six containers. Each container gets
+**only its own** key; `GIT_TOKEN` only `devteam-devops`. The temporary env files are deleted right after
+each start. The script refuses `UI_BIND` other than `127.0.0.1` without `UI_USER`/`UI_PASSWORD`.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\wslc-up.ps1          # first run builds the image (~8 min)
+wslc list                                                              # 6 containers, (healthy) after ~30 s
+```
+
+Open http://localhost:8099 (your `UI_PORT`).
+
+Smoke test without a model (uses `tests/mock_llm.py`; publishing fails without a Git host, which is expected):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\wslc-up.ps1 -Mock
+```
+
+Send a small task in the UI: the feed shows architect → backend/frontend → QA (pytest) → DevOps,
+the task ends as `done_no_push`.
+
+Security check (the same as in `check.sh`):
+
+```powershell
+wslc exec -u runner devteam-devops sh -c "cat /proc/1/environ > /dev/null && echo LEAK || echo ok"   # ok
+wslc exec -u runner devteam-backend curl -s -o NUL -w "%{http_code}" -X POST http://devops:8000/publish -d "{}"   # 403
+```
+
+`scripts/check.sh` itself calls `docker` and does not work with wslc.
+
+### 11.5 Operations
+
+```powershell
+wslc logs -f devteam-lead                                   # logs (any devteam-<role>)
+wslc stats                                                  # CPU / memory per container
+.\scripts\wslc-up.ps1                                       # after editing .env: recreates the containers
+git pull; .\scripts\wslc-up.ps1 -Rebuild                    # update
+.\scripts\wslc-down.ps1                                     # stop, task history and projects kept
+.\scripts\wslc-down.ps1 -Volumes                            # stop and DELETE history and projects
+wslc settings                                               # VM CPU / memory / storage location
+```
+
+Differences from Docker Compose:
+
+- **No restart policy.** After a Windows restart run `wslc-up.ps1` again. Volumes survive.
+  For autostart: Task Scheduler → «At log on» → `powershell -ExecutionPolicy Bypass -File <path>\scripts\wslc-up.ps1`.
+- The test GitLab from `tests/docker-compose.test.yml` is not started by the script (needs ~4 GB RAM).
+- Backup: `wslc run --rm -v devteam_leaddata:/d -v ${PWD}:/b alpine tar czf /b/leaddata.tgz -C /d .`
+  (the same for `devteam_workspace`).
+
+### 11.6 Free the disk space
+
+```powershell
+.\scripts\wslc-down.ps1 -Volumes
+wslc rmi devteam-agent:latest
+wslc image prune -a -f
+```
+
+Deleting images does not shrink the VM disk `%LOCALAPPDATA%\wslc\sessions\<session>\storage.vhdx`
+(~3 GB after a build). To get the space back: `wslc system session terminate`, then delete that
+`storage.vhdx`. wslc creates a new empty disk on the next start. **All images and volumes of that
+session are lost.**
+
+### 11.7 Troubleshooting (Windows)
+
+| Symptom | Cause / fix |
+|---|---|
+| `wslc` not found | WSL older than 3.0.1: `wsl --update` |
+| `running scripts is disabled on this system` | start with `powershell -ExecutionPolicy Bypass -File ...` |
+| `bind: address already in use` / UI not reachable | the port is taken by another app: change `UI_PORT` |
+| A container exits right after the start | `wslc logs devteam-<role>`; usually an empty `LLM_MODEL` or a wrong key |
+| Build fails on `pip install` / `apt-get` with TLS errors | corporate proxy/CA: put the CA into `agent\certs\`, rebuild with `-Rebuild` |
+| Agents are slow or get killed during tests | VM memory: `wslc settings` → raise memory, then `wslc system session terminate` |
+| `.env` changes do not apply | run `wslc-up.ps1` again: it recreates the containers |
