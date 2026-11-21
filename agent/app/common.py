@@ -1,6 +1,8 @@
 """Shared pieces: LLM factory, event emitter, workspace tools."""
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import os
 import pathlib
@@ -34,6 +36,51 @@ ROLE = os.environ.get("ROLE", "unknown")
 LEAD_URL = os.environ.get("LEAD_URL", "http://lead:8000")
 WORKSPACE = pathlib.Path(os.environ.get("WORKSPACE", "/workspace"))
 SHELL_TIMEOUT = int(os.environ.get("SHELL_TIMEOUT", "300") or 300)
+# Commands written by the model run as this separate, unprivileged user (see ShellTool). It cannot
+# read the agent process (/proc/<pid>/environ, memory), where the API key and tokens live.
+# Empty = run as the agent user (only for running the code outside the image, e.g. unit tests).
+SHELL_USER = os.environ.get("SHELL_USER", "runner")
+
+# ---------------------------------------------------------------- internal auth
+# The services talk to each other over plain HTTP inside the compose network. Every internal
+# request carries a per-role token derived from INTERNAL_SECRET, so that nothing else on that
+# network (in particular a command an agent runs in its shell) can post events in a role's name
+# or ask DevOps to publish. A worker only ever holds ITS OWN token; the lead holds the secret.
+_SECRET = os.environ.pop("INTERNAL_SECRET", "")
+if ROLE == "lead":
+    os.environ["INTERNAL_SECRET"] = _SECRET   # the lead derives every role's token
+MIN_SECRET_LEN = 32
+_SECRET_OK = len(_SECRET) >= MIN_SECRET_LEN   # checked before a worker drops the secret
+
+
+def require_secret() -> None:
+    if not _SECRET_OK:
+        raise SystemExit(
+            f"INTERNAL_SECRET is missing or shorter than {MIN_SECRET_LEN} characters. "
+            "Generate one and put it into .env:  INTERNAL_SECRET=$(openssl rand -hex 32)")
+
+
+def role_token(role: str) -> str:
+    return hmac.new(_SECRET.encode(), f"devteam-internal:{role}".encode(), hashlib.sha256).hexdigest()
+
+
+# A worker keeps only its own token; the secret itself is dropped from its memory.
+_OWN_TOKEN = role_token(ROLE) if _SECRET_OK else ""
+if ROLE != "lead":
+    _SECRET = ""
+
+
+def internal_headers(role: str) -> dict:
+    """Headers for an internal request made AS [role] (worker -> lead) or TO [role] (lead -> worker)."""
+    token = _OWN_TOKEN if role == ROLE else role_token(role)
+    return {"X-Devteam-Role": role, "X-Devteam-Token": token}
+
+
+def token_ok(role: str, token: str) -> bool:
+    if not token or not role:
+        return False
+    expected = _OWN_TOKEN if role == ROLE else (role_token(role) if _SECRET else "")
+    return bool(expected) and hmac.compare_digest(expected, token)
 
 # ---------------------------------------------------------------- env helpers
 
@@ -167,7 +214,7 @@ def emit(kind: str, message: str, task_id: str | None = None, role: str = ROLE, 
         "extra": extra,
     }
     try:
-        httpx.post(f"{LEAD_URL}/api/internal/events", json=payload, timeout=5)
+        httpx.post(f"{LEAD_URL}/api/internal/events", json=payload, timeout=5, headers=internal_headers(role))
     except Exception:
         pass
 
@@ -277,12 +324,9 @@ class ShellTool(BaseTool):
 
     def _run(self, command: str) -> str:
         emit("shell", f"$ {command}")
-        # Never hand secrets to commands the model writes (keys/tokens stay in the agent process only)
-        safe_env = {k: v for k, v in os.environ.items()
-                    if not any(s in k.upper() for s in ("API_KEY", "TOKEN", "PASSWORD", "SECRET"))}
         try:
             r = subprocess.run(
-                ["bash", "-lc", command], cwd=str(current_project_dir()), env=safe_env,
+                shell_argv(command), cwd=str(current_project_dir()), env=_shell_env(),
                 capture_output=True, text=True, timeout=SHELL_TIMEOUT,
             )
             out = (r.stdout + ("\n" + r.stderr if r.stderr else "")).strip()
@@ -293,6 +337,48 @@ class ShellTool(BaseTool):
         except subprocess.TimeoutExpired:
             emit("shell", f"timeout {SHELL_TIMEOUT}s")
             return f"TIMEOUT after {SHELL_TIMEOUT}s"
+
+
+def _shell_env() -> dict:
+    """Environment for model-written commands: never keys, tokens, passwords or secrets."""
+    return {k: v for k, v in os.environ.items()
+            if not any(s in k.upper() for s in ("API_KEY", "TOKEN", "PASSWORD", "SECRET"))}
+
+
+def shell_argv(command: str) -> list[str]:
+    """Run [command] as SHELL_USER via sudo (a sudoers rule allows exactly this), with a clean
+    environment and group-writable files, so the agent and the shell can both edit the project.
+    Only the variables from _shell_env() are passed; they are not secret, so seeing them in the
+    process list is harmless."""
+    script = "umask 002; " + command
+    if not SHELL_USER:
+        return ["bash", "-lc", script]
+    env = _shell_env()
+    env.update(HOME=f"/home/{SHELL_USER}", USER=SHELL_USER, LOGNAME=SHELL_USER)
+    return ["sudo", "-n", "-u", SHELL_USER, "--", "/usr/bin/env", "-i",
+            *[f"{k}={v}" for k, v in env.items()], "bash", "-lc", script]
+
+
+def share_with_shell(path: pathlib.Path) -> None:
+    """Make the agent's own files under [path] group-writable for the shell user (shared group).
+    Needed for workspaces created by older versions; cheap no-op for new ones."""
+    try:
+        gid = os.stat(WORKSPACE).st_gid
+        uid = os.getuid()
+        for p in [path, *path.rglob("*")]:
+            try:
+                st = p.lstat()
+                if st.st_uid != uid or p.is_symlink():
+                    continue
+                if st.st_gid != gid:
+                    os.chown(p, -1, gid)
+                mode = st.st_mode | 0o060 | (0o2010 if p.is_dir() else 0)
+                if mode != st.st_mode:
+                    os.chmod(p, mode & 0o7777)
+            except OSError:
+                pass
+    except OSError:
+        pass
 
 
 def workspace_tools(with_shell: bool = True) -> list[BaseTool]:

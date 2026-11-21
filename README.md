@@ -30,11 +30,14 @@ Full step-by-step guide: **[DEPLOY.md](DEPLOY.md)**. Model choice per role: **[M
 ```bash
 git clone https://github.com/<you>/ai-devteam.git /opt/devteam && cd /opt/devteam
 cp .env.example .env && chmod 600 .env
+echo "INTERNAL_SECRET=$(openssl rand -hex 32)" >> .env   # signs requests between the containers
 $EDITOR .env                       # model, 6 keys, GIT_URL/GIT_TOKEN/GIT_NAMESPACE
 cp /path/to/ca.crt agent/certs/    # only if the LLM/GitLab uses a private CA
 docker compose up -d --build
 ./scripts/check.sh                 # pre-flight: keys, tool calling, Git token, UI
 ```
+
+**Windows:** `wslc` (WSL containers, no Docker Desktop), `.\scripts\wslc-up.ps1`. See [DEPLOY.md § 11](DEPLOY.md#11-windows-wsl-containers-wslc).
 
 The UI listens on `127.0.0.1:8080` (`UI_BIND`/`UI_PORT`). Open it through an SSH tunnel:
 

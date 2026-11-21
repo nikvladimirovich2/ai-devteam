@@ -8,16 +8,27 @@ import threading
 import time
 import traceback
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel
 
 from crewai import Agent, Crew, Process, Task
 
-from common import (ROLE, WORKSPACE, build_llm, emit, env, set_task_context,
-                    step_callback, workspace_tools)
+from common import (ROLE, WORKSPACE, build_llm, emit, env, require_secret, set_task_context,
+                    share_with_shell, step_callback, token_ok, workspace_tools)
 from roles import COMMON_RULES, ROLES
 
+require_secret()
+os.umask(0o002)                      # files the agent writes stay editable by the shell user
+share_with_shell(WORKSPACE)          # only the top level here; each project on /run
+
 app = FastAPI(title=f"devteam-{ROLE}")
+
+
+def from_lead(x_devteam_role: str = Header(""), x_devteam_token: str = Header("")) -> None:
+    """Only the lead may give this worker jobs: it signs requests with this worker's role token.
+    A command an agent runs in its shell has no token, so it cannot call /run, /publish or /ci."""
+    if x_devteam_role != ROLE or not token_ok(ROLE, x_devteam_token):
+        raise HTTPException(403, "internal endpoint")
 _lock = threading.Lock()
 _state = {"busy": False, "task_id": "", "since": 0.0}
 
@@ -60,7 +71,7 @@ class PublishReq(BaseModel):
     commit_message: str = "AI DevTeam"
 
 
-@app.post("/publish")
+@app.post("/publish", dependencies=[Depends(from_lead)])
 def publish_direct(req: PublishReq):
     """Deterministic fallback used by the lead when the model didn't call the tool."""
     if ROLE != "devops":
@@ -90,7 +101,7 @@ class CiReq(BaseModel):
     sha: str
 
 
-@app.post("/ci")
+@app.post("/ci", dependencies=[Depends(from_lead)])
 def ci(req: CiReq):
     """Wait for CI of the pushed commit; returns status + failed job logs (devops only)."""
     if ROLE != "devops":
@@ -133,7 +144,7 @@ def report_usage(req, crew, t0: float) -> dict:
     return u
 
 
-@app.post("/run")
+@app.post("/run", dependencies=[Depends(from_lead)])
 def run(req: RunReq):
     proj = pathlib.Path(req.project_dir).resolve()
     if WORKSPACE.resolve() not in proj.parents:
@@ -143,6 +154,7 @@ def run(req: RunReq):
     try:
         _state.update(busy=True, task_id=req.task_id, since=time.time())
         proj.mkdir(parents=True, exist_ok=True)
+        share_with_shell(proj)
         set_task_context(req.task_id, str(proj))
         emit("start", f"▶ {req.title}")
         description = req.instruction

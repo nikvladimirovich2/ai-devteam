@@ -5,7 +5,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 \
 
 # Tools agents use to build/test the generated products
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        git curl ca-certificates build-essential nodejs npm sqlite3 jq procps \
+        git curl ca-certificates build-essential nodejs npm sqlite3 jq procps sudo \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt /tmp/requirements.txt
@@ -20,11 +20,20 @@ RUN set -e; update-ca-certificates; \
 ENV REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
     NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt
 
-RUN useradd -m -u 1000 agent && mkdir -p /workspace /data && chown agent:agent /workspace /data
+# Two users. "agent" runs the service and holds the API key / Git token in its environment.
+# "runner" executes the commands the model writes (ShellTool -> sudo -u runner). A different uid
+# cannot read /proc/<agent pid>/environ or the agent's memory, so a prompt injection that makes
+# the model run `cat /proc/1/environ` gets nothing. They share the "agent" group and the setgid
+# /workspace, so both can edit project files.
+RUN useradd -m -u 1000 agent && useradd -m -u 1001 -g agent -s /bin/bash runner \
+    && mkdir -p /workspace /data && chown agent:agent /workspace /data && chmod 2775 /workspace \
+    && printf 'Defaults:agent !use_pty, !lecture, env_reset\nagent ALL=(runner) NOPASSWD: ALL\n' > /etc/sudoers.d/agent-runner \
+    && chmod 0440 /etc/sudoers.d/agent-runner && visudo -cf /etc/sudoers.d/agent-runner \
+    && git config --system --add safe.directory '*' && git config --system init.defaultBranch main
 COPY --chown=agent:agent app/ /app/
+RUN chmod -R go-w /app
 WORKDIR /app
 USER agent
-RUN git config --global --add safe.directory '*' && git config --global init.defaultBranch main
 
 EXPOSE 8000
 HEALTHCHECK --interval=20s --timeout=5s --start-period=20s CMD curl -fs http://localhost:8000/health || exit 1

@@ -103,8 +103,9 @@ def _ensure_github(c: dict, name: str, path: str, description: str) -> dict:
 
 # ------------------------------------------------------------------ git
 
-def _git(*args: str, cwd: str, insecure: bool = False) -> str:
+def _git(*args: str, cwd: str, insecure: bool = False, extra_env: dict | None = None) -> str:
     e = dict(os.environ)
+    e.update(extra_env or {})
     who, mail = env("GIT_AUTHOR_NAME", "AI DevTeam"), env("GIT_AUTHOR_EMAIL", "ai-devteam@example.com")
     e.update({"GIT_AUTHOR_NAME": who, "GIT_AUTHOR_EMAIL": mail, "GIT_COMMITTER_NAME": who,
               "GIT_COMMITTER_EMAIL": mail, "GIT_TERMINAL_PROMPT": "0"})
@@ -143,8 +144,11 @@ def publish(project_name: str, description: str, commit_message: str) -> dict:
     else:
         _git("remote", "add", "origin", remote["clone_url"], cwd=repo)
     basic = base64.b64encode(f"{remote['basic_user']}:{c['token']}".encode()).decode()
-    _git("-c", f"http.extraHeader=Authorization: Basic {basic}",
-         "push", "-u", "origin", f"{branch}:{branch}", cwd=repo, insecure=c["insecure"])
+    # The header goes through the environment, not the command line: /proc/<pid>/cmdline is
+    # readable by every user in the container (including the shell user of the agents).
+    _git("push", "-u", "origin", f"{branch}:{branch}", cwd=repo, insecure=c["insecure"],
+         extra_env={"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "http.extraHeader",
+                    "GIT_CONFIG_VALUE_0": "Authorization: Basic " + basic})
     sha = _git("rev-parse", "HEAD", cwd=repo)
     return {"provider": c["provider"], "web_url": remote["web_url"], "repo": remote["clone_url"],
             "branch": branch, "commit": sha, "created": remote["created"]}

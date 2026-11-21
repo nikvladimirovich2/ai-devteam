@@ -14,6 +14,8 @@ x-llm-env: &llm-env
   SHELL_TIMEOUT: ${SHELL_TIMEOUT:-300}
   LEAD_URL: http://lead:8000
   WORKSPACE: /workspace
+  # signs requests between the services (required, >= 32 chars): openssl rand -hex 32
+  INTERNAL_SECRET: ${INTERNAL_SECRET:?set INTERNAL_SECRET in .env (openssl rand -hex 32)}
 
 x-agent: &agent
   build: ./agent

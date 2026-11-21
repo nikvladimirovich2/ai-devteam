@@ -18,6 +18,8 @@ get() { grep -E "^$1=" .env | tail -1 | cut -d= -f2- | sed -E "s/^'(.*)'$/\1/; s
 for v in LLM_MODEL LLM_BASE_URL GIT_URL GIT_TOKEN; do
   [[ -n "$(get $v)" ]] && ok "$v set" || bad "$v is empty"
 done
+s="$(get INTERNAL_SECRET)"
+(( ${#s} >= 32 )) && ok "INTERNAL_SECRET set" || bad "INTERNAL_SECRET is shorter than 32 characters (openssl rand -hex 32)"
 for r in $ROLES; do
   V="$(echo $r | tr a-z A-Z)_API_KEY"; val="$(get $V)"
   if [[ -z "$val" ]]; then bad "$V is empty"; continue; fi
@@ -88,6 +90,12 @@ print("OK " + msg)
 for r in lead architect backend frontend qa; do
   docker exec "devteam-$r" sh -c 'test -z "$GIT_TOKEN"' && : || bad "GIT_TOKEN leaked into devteam-$r"
 done
+# The agents' shell runs as "runner": it must not see the agent's environment (keys, token)
+# and must not be able to talk to the internal endpoints without a token.
+out=$(docker exec -u runner devteam-devops sh -c 'cat /proc/1/environ >/dev/null 2>&1 && echo LEAK || echo ok')
+[[ "$out" == ok ]] && ok "shell user cannot read the agent environment" || bad "shell user can read /proc/1/environ"
+code=$(docker exec -u runner devteam-backend curl -s -o /dev/null -w '%{http_code}' -X POST http://devops:8000/publish -H 'Content-Type: application/json' -d '{}')
+[[ "$code" == 403 ]] && ok "internal endpoints reject unsigned calls (403)" || bad "devops /publish without token → $code (expected 403)"
 
 echo "6) UI"
 port=$(get UI_PORT); port=${port:-8080}

@@ -24,14 +24,14 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Optional
 
 import httpx
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from pydantic import BaseModel
 
 from crewai import Agent, Crew, Process, Task
 
-from common import WORKSPACE, build_llm, env, extract_json
+from common import WORKSPACE, build_llm, env, extract_json, internal_headers, require_secret, token_ok
 from roles import ROLES
 
 DB_PATH = pathlib.Path(os.environ.get("DB_PATH", "/data/devteam.db"))
@@ -50,6 +50,7 @@ CLEAN_ENV_HINT = (
 _gu = env("GIT_URL")
 GIT_PROVIDER = (env("GIT_PROVIDER") or ("github" if "github" in _gu.lower() else "gitlab")).lower()
 
+require_secret()
 app = FastAPI(title="AI DevTeam — Team Lead")
 security = HTTPBasic(auto_error=False)
 
@@ -172,7 +173,7 @@ def call_worker(task_id: str, role: str, title: str, instruction: str, context: 
     for attempt in range(3):
         try:
             with httpx.Client(timeout=httpx.Timeout(None, connect=10)) as c:
-                r = c.post(f"{WORKERS[role]}/run", json=payload)
+                r = c.post(f"{WORKERS[role]}/run", json=payload, headers=internal_headers(role))
             if r.status_code == 409:
                 time.sleep(10)
                 continue
@@ -406,7 +407,7 @@ def ci_loop(task_id: str, name: str, summary: str, ctx: str) -> dict:
         update_task(task_id, stage=f"CI: waiting for pipeline ({sha[:8]})")
         lead_say(task_id, "ci", f"⏳ Waiting for CI for commit {sha[:10]}…")
         try:
-            ci = httpx.post(f"{WORKERS['devops']}/ci", timeout=None,
+            ci = httpx.post(f"{WORKERS['devops']}/ci", timeout=None, headers=internal_headers("devops"),
                             json={"task_id": task_id, "project_name": name, "sha": sha}).json()
         except Exception as e:
             ci = {"status": "error", "details": str(e)}
@@ -438,7 +439,7 @@ def ci_loop(task_id: str, name: str, summary: str, ctx: str) -> dict:
         if _last_pushed_sha(task_id) == sha:
             lead_say(task_id, "warn", "DevOps did not push the fix — publishing directly")
             try:
-                httpx.post(f"{WORKERS['devops']}/publish", timeout=600, json={
+                httpx.post(f"{WORKERS['devops']}/publish", timeout=600, headers=internal_headers("devops"), json={
                     "task_id": task_id, "project_dir": t["project_dir"], "project_name": name,
                     "description": plan.get("summary", "")[:300],
                     "commit_message": f"fix(ci): round {rnd + 1}"})
@@ -597,7 +598,7 @@ def run_pipeline(task_id: str, followup: str = "") -> None:
             lead_say(task_id, "warn", "⚠ DevOps did not call publish_repository (no real push). "
                      "Trying to publish directly…")
             try:
-                r = httpx.post(f"{WORKERS['devops']}/publish", timeout=600, json={
+                r = httpx.post(f"{WORKERS['devops']}/publish", timeout=600, headers=internal_headers("devops"), json={
                     "task_id": task_id, "project_dir": t["project_dir"], "project_name": name,
                     "description": plan.get("summary", "")[:300],
                     "commit_message": f"AI DevTeam: {t['title'][:200]}"})
@@ -660,9 +661,14 @@ class InEvent(BaseModel):
 
 
 @app.post("/api/internal/events")
-def internal_event(ev: InEvent):
+def internal_event(ev: InEvent, x_devteam_role: str = Header(""), x_devteam_token: str = Header("")):
+    """Events from the workers. The role is the one the token proves, never the one in the body:
+    otherwise anything that can reach this port could, for example, post a fake "pushed" event
+    as devops, and the lead takes the repository link and commit from exactly those events."""
+    if x_devteam_role not in WORKERS or not token_ok(x_devteam_role, x_devteam_token):
+        raise HTTPException(403, "internal endpoint")
     if ev.task_id:
-        add_event(ev.task_id, ev.role, ev.kind, ev.message, ev.extra)
+        add_event(ev.task_id, x_devteam_role, ev.kind, ev.message, ev.extra)
     return {"ok": True}
 
 
