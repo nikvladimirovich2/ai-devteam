@@ -62,6 +62,11 @@ async def chat(req: Request):
     print(f"[mock] role={role} key=...{auth[-6:]} tools={'tools' in body} n={len(msgs)}", flush=True)
     used_tool = any(m.get("role") == "tool" for m in msgs) or "Observation:" in text
 
+    # the setup wizard's connection check (setup_checks.check_llm)
+    if any((t.get("function") or {}).get("name") == "devteam_ping" for t in body.get("tools") or []):
+        return reply(None, [{"id": "call_ping", "type": "function",
+                             "function": {"name": "devteam_ping", "arguments": json.dumps({"ok": True})}}])
+
     if role == "Team Lead":
         if "Make a plan" in text:
             final = json.dumps(PLAN)

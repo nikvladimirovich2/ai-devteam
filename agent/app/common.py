@@ -84,9 +84,33 @@ def token_ok(role: str, token: str) -> bool:
 
 # ---------------------------------------------------------------- env helpers
 
+# Settings from the web setup wizard. The lead keeps them in its database and sends each worker
+# what it needs with every job; devops keeps its Git settings in its own volume. A value set in
+# .env (the container environment) always wins, so existing installations keep working unchanged.
+# They are NOT in os.environ, so commands the agents run never see them (see _shell_env).
+_overrides: dict[str, str] = {}
+_overrides_lock = threading.Lock()
+
+
+def set_overrides(values: dict[str, str], replace: bool = True) -> None:
+    clean = {str(k): str(v) for k, v in values.items() if v is not None and str(v) != ""}
+    with _overrides_lock:
+        if replace:
+            _overrides.clear()
+        _overrides.update(clean)
+
+
 def env(name: str, default: str = "") -> str:
     v = os.environ.get(name, "")
-    return v if v.strip() else default
+    if v.strip():
+        return v
+    o = _overrides.get(name, "")
+    return o if o.strip() else default
+
+
+def ui_lang() -> str:
+    """Language of the hints in the feed: chosen in the setup wizard (UI_LANG), default English."""
+    return "ru" if env("UI_LANG", "en").lower().startswith("ru") else "en"
 
 
 def env_bool(name: str) -> bool:
@@ -133,10 +157,10 @@ def build_llm(role: str = ROLE) -> LLM:
     p = _PREFIX_ROLE.get(role, role.upper())
     model = env(f"{p}_MODEL") or env("LLM_MODEL")
     if not model:
-        raise RuntimeError("LLM_MODEL is not set in .env")
-    api_key = env(f"{p}_API_KEY") or env("LLM_API_KEY")
-    if not api_key:
-        raise RuntimeError(f"{p}_API_KEY is not set in .env")
+        raise RuntimeError("the model is not set: open ⚙ Settings in the web interface (or LLM_MODEL in .env)")
+    # one key for the whole team (LLM_API_KEY) or a personal key per role (<ROLE>_API_KEY).
+    # Self-hosted servers often need no key at all.
+    api_key = env(f"{p}_API_KEY") or env("LLM_API_KEY") or "none"
     kwargs: dict[str, Any] = {
         "model": model,
         "api_key": api_key,

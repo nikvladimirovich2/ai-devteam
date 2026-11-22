@@ -32,7 +32,7 @@ def detect_provider(url: str, forced: str = "") -> str:
 
 
 def cfg() -> dict:
-    url = env("GIT_URL").rstrip("/")
+    url = env("GIT_URL").rstrip("/") or ("https://github.com" if env("GIT_PROVIDER").lower() == "github" else "")
     return {
         "url": url,
         "token": env("GIT_TOKEN"),
@@ -99,6 +99,64 @@ def _ensure_github(c: dict, name: str, path: str, description: str) -> dict:
             repo, created = r.json(), True
     return {"web_url": repo["html_url"], "clone_url": repo["clone_url"], "created": created,
             "basic_user": "x-access-token"}
+
+
+# ------------------------------------------------------------------ access check (setup wizard)
+
+def _github_api(c: dict) -> str:
+    host = urllib.parse.urlparse(c["url"]).hostname or "github.com"
+    return "https://api.github.com" if host in ("github.com", "www.github.com", "api.github.com") \
+        else f"{c['url']}/api/v3"
+
+
+def check_access(c: dict) -> dict:
+    """Token works, the namespace exists and repositories can be created there. No changes are made.
+    Returns {"ok", "code", "detail", "login", "namespace"}; codes are explained in setup_checks."""
+    from setup_checks import classify
+    if not c.get("url") or not c.get("token"):
+        return {"ok": False, "code": "missing", "detail": "url/token"}
+    try:
+        if c["provider"] == "github":
+            api = _github_api(c)
+            hdr = {"Authorization": f"Bearer {c['token']}", "Accept": "application/vnd.github+json",
+                   "X-GitHub-Api-Version": "2022-11-28"}
+            with httpx.Client(headers=hdr, verify=not c["insecure"], timeout=30) as h:
+                me = h.get(f"{api}/user")
+                if me.status_code in (401, 403):
+                    return {"ok": False, "code": "token_invalid", "detail": f"HTTP {me.status_code}"}
+                me.raise_for_status()
+                login = me.json()["login"]
+                owner = c["namespace"] or login
+                if c["namespace"]:
+                    org = h.get(f"{api}/orgs/{c['namespace']}")
+                    if org.status_code != 200:
+                        return {"ok": False, "code": "namespace_not_found", "detail": f"HTTP {org.status_code}", "login": login}
+                scopes = me.headers.get("x-oauth-scopes")
+                if scopes is not None and "repo" not in [s.strip() for s in scopes.split(",")]:
+                    return {"ok": False, "code": "git_rights", "detail": f"classic token scopes: {scopes or '-'} (needs repo, workflow)",
+                            "login": login}
+            return {"ok": True, "code": "ok", "login": login, "namespace": owner,
+                    "detail": f"GitHub user {login}, repositories go to {owner}"}
+        api = f"{c['url']}/api/v4"
+        with httpx.Client(headers={"PRIVATE-TOKEN": c["token"]}, verify=not c["insecure"], timeout=30) as h:
+            me = h.get(f"{api}/user")
+            if me.status_code in (401, 403):
+                return {"ok": False, "code": "token_invalid", "detail": f"HTTP {me.status_code}"}
+            me.raise_for_status()
+            login = me.json()["username"]
+            ns = c["namespace"] or login
+            n = h.get(f"{api}/namespaces/{urllib.parse.quote(ns, safe='')}")
+            if n.status_code != 200:
+                return {"ok": False, "code": "namespace_not_found", "detail": f"HTTP {n.status_code}", "login": login}
+            s = h.get(f"{api}/personal_access_tokens/self")
+            if s.status_code == 200:
+                scopes = s.json().get("scopes", [])
+                if "api" not in scopes:
+                    return {"ok": False, "code": "git_rights", "detail": f"token scopes: {','.join(scopes)} (needs api, write_repository)",
+                            "login": login}
+        return {"ok": True, "code": "ok", "login": login, "namespace": ns, "detail": f"GitLab user {login}, projects go to {ns}"}
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "code": classify(e), "detail": str(e)[:600]}
 
 
 # ------------------------------------------------------------------ git

@@ -66,12 +66,28 @@
   body.selmode #bulk { display:flex }
   button.danger { background:var(--bad) } button.sm { padding:4px 8px; font-size:12px; font-weight:500 }
   .side-h { padding:10px 14px; font-weight:600; border-bottom:1px solid var(--line); display:flex; justify-content:space-between; align-items:center }
+  .modal { position:fixed; inset:0; background:rgba(0,0,0,.6); display:none; align-items:flex-start; justify-content:center; overflow:auto; z-index:10 }
+  .modal.open { display:flex }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:20px 24px; margin:40px 16px; width:min(720px,100%) }
+  .card h2 { margin:0 0 4px; font-size:20px } .card h3 { margin:18px 0 6px; font-size:15px }
+  .card .lead { color:var(--mute); margin:0 0 8px }
+  .card label { display:block; margin:8px 0 2px; color:var(--mute); font-size:12px }
+  .card input, .card select { width:100%; background:var(--bg); color:var(--text); border:1px solid var(--line); border-radius:8px; padding:8px; font:inherit }
+  .card .row { display:flex; gap:8px; align-items:center; margin-top:10px; flex-wrap:wrap }
+  .card .step { border-top:1px solid var(--line); padding-top:6px; margin-top:12px }
+  .card .st { padding:8px 10px; border-radius:8px; margin-top:8px; display:none; white-space:pre-wrap; word-break:break-word }
+  .card .st.ok { display:block; background:#13221a; border-left:3px solid var(--ok) }
+  .card .st.bad { display:block; background:#2a1515; border-left:3px solid var(--bad) }
+  .card .st.wait { display:block; background:var(--bg); border-left:3px solid var(--warn) }
+  .card .st small { color:var(--mute); display:block; margin-top:4px }
+  .card .done { color:var(--ok); font-weight:600 }
 </style>
 </head>
 <body>
 <header>
   <h1>🤖 AI DevTeam</h1>
   <div id="team"></div>
+  <button class="sec sm" id="setupBtn" style="margin-left:auto" onclick="openSetup()">⚙</button>
 </header>
 <main>
   <aside>
@@ -115,6 +131,52 @@
     <div id="viewer" style="display:none"></div>
   </aside>
 </main>
+<div class="modal" id="setup"><div class="card">
+  <div style="display:flex;justify-content:space-between;align-items:center">
+    <h2 data-t="setup_title"></h2>
+    <select id="sLang" style="width:auto" onchange="setLang(this.value)"><option value="ru">Русский</option><option value="en">English</option></select>
+  </div>
+  <p class="lead" data-t="setup_lead"></p>
+
+  <div class="step"><h3><span data-t="s1"></span> <span class="done" id="d1"></span></h3>
+    <p class="lead" data-t="s1_help"></p>
+    <label data-t="provider"></label><select id="sProv" onchange="provChanged()"></select>
+    <div id="sKeyBox"><label><span data-t="api_key"></span> <a id="sKeyLink" target="_blank" data-t="get_key"></a></label>
+      <input id="sKey" type="password" autocomplete="off"></div>
+    <div id="sBaseBox"><label data-t="base_url"></label><input id="sBase" placeholder="https://host/v1"></div>
+    <label data-t="model"></label><input id="sModel" list="sModels" placeholder="gpt-4.1 / claude-sonnet-4-5 / qwen3-coder"><datalist id="sModels"></datalist>
+    <div class="row"><button class="sec" type="button" onclick="loadModels()" data-t="load_models"></button>
+      <button type="button" onclick="saveLLM(false)" data-t="check_save"></button></div>
+    <div class="st" id="s1st"></div>
+  </div>
+
+  <div class="step"><h3><span data-t="s2"></span> <span class="done" id="d2"></span></h3>
+    <p class="lead" data-t="s2_help"></p>
+    <label data-t="git_host"></label>
+    <select id="gProv" onchange="gitChanged()"><option value="github">GitHub</option><option value="gitlab">GitLab</option></select>
+    <label data-t="git_url"></label><input id="gUrl" oninput="gitLink()">
+    <label><span data-t="git_token"></span> <a id="gLink" target="_blank" data-t="create_token"></a></label>
+    <input id="gToken" type="password" autocomplete="off">
+    <small class="lead" id="gRights"></small>
+    <label data-t="git_ns"></label><input id="gNs">
+    <label data-t="visibility"></label>
+    <select id="gVis"><option value="private" data-t="private"></option><option value="public" data-t="public"></option></select>
+    <div class="row"><button type="button" onclick="saveGit()" data-t="check_save"></button></div>
+    <div class="st" id="s2st"></div>
+  </div>
+
+  <div class="step"><h3><span data-t="s3"></span> <span class="done" id="d3"></span></h3>
+    <p class="lead" data-t="s3_help"></p>
+    <label data-t="user"></label><input id="uUser" value="admin">
+    <label data-t="password"></label><input id="uPass" type="password" autocomplete="new-password">
+    <div class="row"><button class="sec" type="button" onclick="saveUI()" data-t="save"></button></div>
+    <div class="st" id="s3st"></div>
+  </div>
+
+  <div class="row" style="justify-content:flex-end;margin-top:18px">
+    <button class="sec" type="button" onclick="closeSetup()" data-t="close"></button>
+  </div>
+</div></div>
 <script>
 const ROLE_NAMES = {lead:"Team Lead", architect:"Architect", backend:"Backend", frontend:"Frontend", qa:"QA", devops:"DevOps", user:"You"};
 const STATUS = {queued:"queued", running:"running", done:"done", done_no_push:"done (no push)", ci_failed:"CI failed", failed:"failed", cancelled:"cancelled", interrupted:"interrupted"};
@@ -258,7 +320,10 @@ async function send(ev) {
                $("#prompt").value = ""; await loadTasks(); renderHead(); }
     else { const t = await api("/api/tasks", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({prompt})});
            $("#prompt").value = ""; await openTask(t.id); }
-  } catch (e) { alert(e.message); $("#sendBtn").disabled = false; }
+  } catch (e) {
+    $("#sendBtn").disabled = false;
+    if (e.message.includes("not_configured")) { alert(t("not_configured")); openSetup(); } else alert(e.message);
+  }
 }
 function reportText(id) { const e = events.find(x => x.id === id); return e ? e.message : ""; }
 function copyReport(id) { navigator.clipboard.writeText(reportText(id)).then(() => {}, () => alert("Copying is not available (needs https/localhost)")); }
@@ -276,6 +341,134 @@ async function cancelTask() { if (cur && confirm("Stop the team's work on this t
 
 $("#prompt").addEventListener("keydown", e => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) send(e); });
 loadTeam(); loadTasks(); setInterval(loadTeam, 4000); setInterval(loadTasks, 8000);
+
+// ---------------------------------------------------------------- setup wizard
+const T = {
+  ru: {setup_title:"Настройка", setup_lead:"Три шага: модель ИИ, куда публиковать проекты и пароль. Ключи хранятся только на этом сервере.",
+       s1:"1. Модель ИИ", s1_help:"Выберите провайдера, вставьте ключ и выберите модель. Нужна модель, которая умеет вызывать инструменты.",
+       provider:"Провайдер", api_key:"API-ключ", get_key:"получить ключ ↗", base_url:"Адрес сервера модели", model:"Модель",
+       load_models:"Загрузить список моделей", check_save:"Проверить и сохранить", save:"Сохранить", close:"Закрыть",
+       s2:"2. Куда публиковать", s2_help:"Готовые проекты появятся в вашем GitHub или GitLab. Токен хранится только у агента DevOps.",
+       git_host:"Сервис", git_url:"Адрес", git_token:"Токен доступа", create_token:"создать токен ↗",
+       git_ns:"Группа / организация (пусто = личный аккаунт)", visibility:"Новые репозитории", private:"приватные", public:"публичные",
+       rights_github:"Права токена: repo, workflow (кнопка выше откроет GitHub с уже отмеченными правами).",
+       rights_gitlab:"Права токена: api, write_repository (кнопка выше откроет GitLab с уже отмеченными правами).",
+       s3:"3. Пароль интерфейса", s3_help:"Нужен, если интерфейс открыт не только на этом компьютере. Можно пропустить.",
+       user:"Логин", password:"Пароль (не короче 8 символов)", ready:"✓ готово", checking:"Проверяю…", models_found:"Моделей найдено: ",
+       models_none:"Список не получен, впишите название модели вручную.", save_anyway:"Всё равно сохранить",
+       saved_pw:"Пароль сохранён. Браузер попросит войти.", short_pw:"Пароль короче 8 символов.", from_env:"задано в .env",
+       not_configured:"Сначала настройте модель ИИ (⚙ Настройка).", settings:"⚙ Настройка"},
+  en: {setup_title:"Setup", setup_lead:"Three steps: the AI model, where to publish the projects and a password. Keys stay on this server.",
+       s1:"1. AI model", s1_help:"Pick the provider, paste the key and choose a model. The model must support tool calling.",
+       provider:"Provider", api_key:"API key", get_key:"get a key ↗", base_url:"Model server address", model:"Model",
+       load_models:"Load the model list", check_save:"Check and save", save:"Save", close:"Close",
+       s2:"2. Where to publish", s2_help:"Finished projects appear in your GitHub or GitLab. The token is kept by the DevOps agent only.",
+       git_host:"Service", git_url:"Address", git_token:"Access token", create_token:"create a token ↗",
+       git_ns:"Group / organization (empty = personal account)", visibility:"New repositories", private:"private", public:"public",
+       rights_github:"Token rights: repo, workflow (the link above opens GitHub with them ticked).",
+       rights_gitlab:"Token rights: api, write_repository (the link above opens GitLab with them ticked).",
+       s3:"3. Interface password", s3_help:"Needed when the interface is reachable from other computers. You can skip it.",
+       user:"Login", password:"Password (at least 8 characters)", ready:"✓ done", checking:"Checking…", models_found:"Models found: ",
+       models_none:"No list available, type the model name.", save_anyway:"Save anyway",
+       saved_pw:"Password saved. The browser will ask you to log in.", short_pw:"The password is shorter than 8 characters.", from_env:"set in .env",
+       not_configured:"Set up the AI model first (⚙ Setup).", settings:"⚙ Setup"},
+};
+let LANG = (localStorage.getItem("lang") || (navigator.language || "en")).toLowerCase().startsWith("ru") ? "ru" : "en";
+let SETUP = null;
+const t = k => (T[LANG] || T.en)[k] || k;
+function applyLang() {
+  document.querySelectorAll("[data-t]").forEach(el => el.textContent = t(el.dataset.t));
+  $("#sLang").value = LANG; $("#setupBtn").textContent = t("settings"); gitChanged(true);
+}
+function setLang(l) { LANG = l; localStorage.setItem("lang", l); applyLang(); post("/api/setup/ui", {lang: l}).catch(() => {}); }
+async function post(p, body) { return api(p, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)}); }
+function status(id, cls, text, detail) {
+  const el = $(id); el.className = "st " + cls;
+  el.innerHTML = esc(text) + (detail ? `<small>${esc(detail)}</small>` : "");
+}
+async function openSetup() {
+  SETUP = await api("/api/setup");
+  if (SETUP.lang && !localStorage.getItem("lang")) LANG = SETUP.lang;
+  const sel = $("#sProv"); sel.innerHTML = Object.entries(SETUP.providers).map(([k, p]) => `<option value="${k}">${esc(p.name)}</option>`).join("");
+  sel.value = SETUP.llm.provider || "openai";
+  $("#sModel").value = SETUP.llm.model || ""; $("#sBase").value = SETUP.llm.base_url || "";
+  $("#sKey").placeholder = SETUP.llm.has_key ? "••••••••  (saved)" : "";
+  provChanged(true);
+  const g = SETUP.git || {};
+  if (g.provider) $("#gProv").value = g.provider;
+  $("#gUrl").value = g.url || ""; $("#gNs").value = g.namespace || "";
+  $("#gToken").placeholder = g.configured ? "••••••••  (saved)" : "";
+  gitChanged(true);
+  $("#d1").textContent = SETUP.llm.configured ? t("ready") + (SETUP.llm.from_env ? " · " + t("from_env") : "") : "";
+  $("#d2").textContent = g.configured ? t("ready") + (g.from_env ? " · " + t("from_env") : "") : "";
+  $("#d3").textContent = SETUP.ui.password_set ? t("ready") + (SETUP.ui.from_env ? " · " + t("from_env") : "") : "";
+  if (SETUP.ui.user) $("#uUser").value = SETUP.ui.user;
+  applyLang(); $("#setup").classList.add("open");
+}
+function closeSetup() { $("#setup").classList.remove("open"); }
+function provChanged(keep) {
+  const p = SETUP.providers[$("#sProv").value];
+  $("#sKeyBox").style.display = p.needs_key || $("#sProv").value === "custom" || $("#sProv").value === "vllm" ? "" : "none";
+  $("#sKeyLink").style.display = p.key_url ? "" : "none"; $("#sKeyLink").href = p.key_url || "#";
+  const own = ["ollama", "vllm", "custom"].includes($("#sProv").value);
+  $("#sBaseBox").style.display = own ? "" : "none";
+  if (!keep || !$("#sBase").value) $("#sBase").value = own ? "" : "";
+  $("#sBase").placeholder = p.base || "https://host/v1";
+  if (!keep) { $("#sModel").value = ""; $("#sModels").innerHTML = ""; }
+}
+async function loadModels() {
+  status("#s1st", "wait", t("checking"));
+  try {
+    const r = await post("/api/setup/models", {provider: $("#sProv").value, base_url: $("#sBase").value || SETUP.providers[$("#sProv").value].base || "",
+                                               api_key: $("#sKey").value, lang: LANG});
+    if (!r.ok) return status("#s1st", "bad", r.message, r.detail);
+    $("#sModels").innerHTML = r.models.map(m => `<option value="${esc(m)}">`).join("");
+    status("#s1st", r.models.length ? "ok" : "wait", r.models.length ? t("models_found") + r.models.length : t("models_none"));
+  } catch (e) { status("#s1st", "bad", e.message); }
+}
+async function saveLLM(force) {
+  status("#s1st", "wait", t("checking"));
+  try {
+    const r = await post("/api/setup/llm", {provider: $("#sProv").value, model: $("#sModel").value, base_url: $("#sBase").value,
+                                            api_key: $("#sKey").value, lang: LANG, force});
+    if (r.ok || r.saved) { status("#s1st", "ok", r.message + " " + r.model, r.detail); $("#d1").textContent = t("ready"); $("#sKey").value = ""; }
+    else {
+      status("#s1st", "bad", r.message, r.detail);
+      if (r.code === "no_tools") $("#s1st").insertAdjacentHTML("beforeend", ` <button class="sec sm" onclick="saveLLM(true)">${t("save_anyway")}</button>`);
+    }
+  } catch (e) { status("#s1st", "bad", e.message); }
+}
+function gitChanged(keep) {
+  const gh = $("#gProv").value === "github";
+  if (!keep || !$("#gUrl").value) $("#gUrl").value = gh ? "https://github.com" : "https://gitlab.com";
+  $("#gRights").textContent = t(gh ? "rights_github" : "rights_gitlab"); gitLink();
+}
+function gitLink() {
+  const u = ($("#gUrl").value || "").replace(/\/+$/, "");
+  $("#gLink").href = $("#gProv").value === "github"
+    ? `${u.includes("github.com") ? "https://github.com" : u}/settings/tokens/new?scopes=repo,workflow&description=AI%20DevTeam`
+    : `${u}/-/user_settings/personal_access_tokens?name=AI%20DevTeam&scopes=api,write_repository`;
+}
+async function saveGit() {
+  status("#s2st", "wait", t("checking"));
+  try {
+    const r = await post("/api/setup/git", {provider: $("#gProv").value, url: $("#gUrl").value, token: $("#gToken").value,
+                                            namespace: $("#gNs").value, visibility: $("#gVis").value, lang: LANG});
+    if (r.ok) { status("#s2st", "ok", r.message, r.detail); $("#d2").textContent = t("ready"); $("#gToken").value = ""; }
+    else status("#s2st", "bad", r.message, r.detail);
+  } catch (e) { status("#s2st", "bad", e.message); }
+}
+async function saveUI() {
+  const pw = $("#uPass").value;
+  if (pw && pw.length < 8) return status("#s3st", "bad", t("short_pw"));
+  try { await post("/api/setup/ui", {user: $("#uUser").value, password: pw, lang: LANG});
+        status("#s3st", "ok", pw ? t("saved_pw") : t("ready")); if (pw) $("#d3").textContent = t("ready"); $("#uPass").value = ""; }
+  catch (e) { status("#s3st", "bad", e.message); }
+}
+(async () => {
+  applyLang();
+  try { const s = await api("/api/setup"); if (!s.llm.configured || !(s.git || {}).configured) openSetup(); } catch (e) {}
+})();
 </script>
 </body>
 </html>

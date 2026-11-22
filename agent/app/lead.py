@@ -31,7 +31,9 @@ from pydantic import BaseModel
 
 from crewai import Agent, Crew, Process, Task
 
-from common import WORKSPACE, build_llm, env, extract_json, internal_headers, require_secret, token_ok
+from common import (WORKSPACE, build_llm, env, env_bool, extract_json, internal_headers, require_secret, set_overrides,
+                    token_ok, ui_lang)
+import setup_checks
 from roles import ROLES
 
 DB_PATH = pathlib.Path(os.environ.get("DB_PATH", "/data/devteam.db"))
@@ -47,21 +49,48 @@ CLEAN_ENV_HINT = (
     "  python -m venv /tmp/cienv && /tmp/cienv/bin/pip install -q -r requirements.txt "
     "(+ requirements-dev.txt if present) && /tmp/cienv/bin/python -m pytest -q\n"
     "Every package the tests import (pytest, httpx/httpx2 for starlette TestClient, etc.) must be in requirements.")
-_gu = env("GIT_URL")
-GIT_PROVIDER = (env("GIT_PROVIDER") or ("github" if "github" in _gu.lower() else "gitlab")).lower()
+
+
+def git_provider() -> str:
+    """gitlab/github: from .env, else what the setup wizard saved."""
+    forced = env("GIT_PROVIDER") or setting("git_provider")
+    return (forced or ("github" if "github" in env("GIT_URL").lower() else "gitlab")).lower()
 
 require_secret()
 app = FastAPI(title="AI DevTeam — Team Lead")
 security = HTTPBasic(auto_error=False)
 
 
-def auth(creds: Optional[HTTPBasicCredentials] = Depends(security)):
-    u, p = env("UI_USER"), env("UI_PASSWORD")
-    if not (u and p):
-        return
+def _hash_password(password: str, salt: bytes | None = None) -> str:
+    import hashlib
     import secrets
-    if not creds or not (secrets.compare_digest(creds.username, u) and secrets.compare_digest(creds.password, p)):
-        raise HTTPException(401, "auth required", headers={"WWW-Authenticate": "Basic"})
+    salt = salt or secrets.token_bytes(16)
+    return f"pbkdf2_sha256$200000${salt.hex()}${hashlib.pbkdf2_hmac('sha256', password.encode(), salt, 200_000).hex()}"
+
+
+def _password_ok(password: str, stored: str) -> bool:
+    import secrets
+    try:
+        _, _, salt, _ = stored.split("$")
+        return secrets.compare_digest(_hash_password(password, bytes.fromhex(salt)), stored)
+    except ValueError:
+        return False
+
+
+def auth(creds: Optional[HTTPBasicCredentials] = Depends(security)):
+    """Basic Auth: UI_USER/UI_PASSWORD from .env, else the password set in the setup wizard.
+    Without either the UI is open (it listens on 127.0.0.1 by default; the start scripts refuse a
+    public bind without a password)."""
+    import secrets
+    u, p = env("UI_USER"), env("UI_PASSWORD")
+    if u and p:
+        if not creds or not (secrets.compare_digest(creds.username, u) and secrets.compare_digest(creds.password, p)):
+            raise HTTPException(401, "auth required", headers={"WWW-Authenticate": "Basic"})
+        return
+    su, sh = setting("ui_user"), setting("ui_hash")
+    if su and sh:
+        if not creds or not (secrets.compare_digest(creds.username, su) and _password_ok(creds.password, sh)):
+            raise HTTPException(401, "auth required", headers={"WWW-Authenticate": "Basic"})
 
 
 # ------------------------------------------------------------------ storage
@@ -88,10 +117,43 @@ with _db_lock:
         id INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT, ts REAL, role TEXT,
         kind TEXT, message TEXT, extra TEXT);
     CREATE INDEX IF NOT EXISTS ev_task ON events(task_id, id);
+    CREATE TABLE IF NOT EXISTS settings(k TEXT PRIMARY KEY, v TEXT);
     """)
     # tasks that were running when the container stopped
     _conn.execute("UPDATE tasks SET status='interrupted' WHERE status IN ('running','queued')")
     _conn.commit()
+
+
+def setting(k: str, default: str = "") -> str:
+    with _db_lock:
+        r = _conn.execute("SELECT v FROM settings WHERE k=?", (k,)).fetchone()
+    return r["v"] if r and r["v"] is not None else default
+
+
+def save_settings(values: dict[str, str]) -> None:
+    with _db_lock:
+        _conn.executemany("INSERT INTO settings(k,v) VALUES(?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v",
+                          list(values.items()))
+        _conn.commit()
+    apply_settings()
+
+
+def model_settings() -> dict[str, str]:
+    """What the setup wizard saved for the model, in the names the agents read (env wins over it)."""
+    return {"LLM_MODEL": setting("llm_model"), "LLM_BASE_URL": setting("llm_base_url"),
+            "LLM_API_KEY": setting("llm_api_key"), "UI_LANG": setting("lang")}
+
+
+def apply_settings() -> None:
+    set_overrides({k: v for k, v in model_settings().items() if v})
+
+
+def worker_config(role: str) -> dict[str, str]:
+    """Settings sent with every job. Values from .env are the worker's own and win over these."""
+    return {k: v for k, v in model_settings().items() if v}
+
+
+apply_settings()
 
 
 def q(sql: str, args: tuple = ()) -> list[dict]:
@@ -169,7 +231,7 @@ def call_worker(task_id: str, role: str, title: str, instruction: str, context: 
     update_task(task_id, stage=f"{role}: {title}")
     lead_say(task_id, "assign", f"→ {ROLES[role]['role']}: {title}", to=role)
     payload = dict(task_id=task_id, project_dir=t["project_dir"], title=title,
-                   instruction=instruction, expected_output=expected, context=context)
+                   instruction=instruction, expected_output=expected, context=context, config=worker_config(role))
     for attempt in range(3):
         try:
             with httpx.Client(timeout=httpx.Timeout(None, connect=10)) as c:
@@ -580,7 +642,7 @@ def run_pipeline(task_id: str, followup: str = "") -> None:
         # ---------------- 5. DevOps + GitLab
         devops = call_worker(task_id, "devops", "packaging and publishing to the repository",
             f"{plan.get('devops_brief', '')}\n"
-            f"Target repository host: {GIT_PROVIDER}.\n"
+            f"Target repository host: {git_provider()}.\n"
             "1) Add Dockerfile (and docker-compose.yml if there is more than one service), CI config "
             "(stages test and build), a README.md with description, run instructions and API; .gitignore.\n"
             "2) Check the tests locally exactly as CI will run them. " + CLEAN_ENV_HINT + "\n"
@@ -631,7 +693,8 @@ def run_pipeline(task_id: str, followup: str = "") -> None:
         lead_say(task_id, "warn", "⏹ Task cancelled by the user")
     except Exception as e:
         update_task(task_id, status="failed", stage="error", result=str(e))
-        lead_say(task_id, "error", f"💥 {e}\n{traceback.format_exc()[-2500:]}")
+        h = setup_checks.hint(e, ui_lang())
+        lead_say(task_id, "error", f"💥 {e}" + (f"\n{h}" if h else "") + f"\n{traceback.format_exc()[-2500:]}")
     finally:
         _cancel.discard(task_id)
         try:
@@ -697,6 +760,8 @@ def list_tasks():
 def create_task(body: NewTask):
     if not body.prompt.strip():
         raise HTTPException(400, "empty prompt")
+    if not env("LLM_MODEL"):
+        raise HTTPException(400, "not_configured: choose the model in ⚙ Settings first")
     tid = time.strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:4]
     title = body.title.strip() or body.prompt.strip().splitlines()[0][:80]
     pdir = WORKSPACE / tid
@@ -849,6 +914,135 @@ async def stream(tid: str, request: Request, after: int = 0):
                 idle = 0
     return StreamingResponse(gen(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+# ------------------------------------------------------------------ setup wizard
+
+def _lang(lang: str = "") -> str:
+    return "ru" if (lang or ui_lang()).lower().startswith("ru") else "en"
+
+
+def _with_message(res: dict, lang: str) -> dict:
+    return {**res, "message": setup_checks.message(res.get("code", "unknown"), _lang(lang))}
+
+
+def _ssl_verify() -> Any:
+    if env_bool("LLM_SSL_VERIFY_DISABLE"):
+        return False
+    return os.environ.get("SSL_CERT_FILE") or True
+
+
+async def _devops_health() -> dict:
+    try:
+        async with httpx.AsyncClient(timeout=5) as c:
+            return (await c.get(f"{WORKERS['devops']}/health")).json()
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+@app.get("/api/setup", dependencies=[Depends(auth)])
+async def setup_status():
+    """What is configured (never the secrets themselves)."""
+    git = (await _devops_health()).get("git", {})
+    return {
+        "lang": setting("lang"),
+        "providers": {k: {kk: v[kk] for kk in ("name", "base", "key_url", "needs_key")} for k, v in setup_checks.PROVIDERS.items()},
+        "llm": {"configured": bool(env("LLM_MODEL")), "provider": setting("llm_provider"), "model": env("LLM_MODEL"),
+                "base_url": env("LLM_BASE_URL"), "has_key": bool(env("LLM_API_KEY") or env("LEAD_API_KEY")),
+                "from_env": bool(os.environ.get("LLM_MODEL", "").strip())},
+        "git": git,
+        "ui": {"password_set": bool((env("UI_USER") and env("UI_PASSWORD")) or setting("ui_hash")),
+               "from_env": bool(env("UI_USER") and env("UI_PASSWORD")), "user": setting("ui_user") or env("UI_USER")},
+    }
+
+
+class SetupModels(BaseModel):
+    provider: str
+    base_url: str = ""
+    api_key: str = ""
+    lang: str = ""
+
+
+@app.post("/api/setup/models", dependencies=[Depends(auth)])
+def setup_models(body: SetupModels):
+    key = body.api_key.strip() or setting("llm_api_key")
+    res = setup_checks.list_models(body.provider, body.base_url.strip(), key, _ssl_verify())
+    return _with_message(res, body.lang)
+
+
+class SetupLLM(BaseModel):
+    provider: str
+    model: str
+    base_url: str = ""
+    api_key: str = ""        # empty = keep the saved key
+    lang: str = ""
+    save: bool = True
+    force: bool = False      # save even when the model does not call tools
+
+
+@app.post("/api/setup/llm", dependencies=[Depends(auth)])
+def setup_llm(body: SetupLLM):
+    p = setup_checks.PROVIDERS.get(body.provider, setup_checks.PROVIDERS["custom"])
+    model = setup_checks.model_id(body.provider, body.model)
+    base = body.base_url.strip() or (p["base"] or "")
+    if p["prefix"] in ("anthropic/", "gemini/"):
+        base = body.base_url.strip()      # native APIs: no address unless the user gives one
+    key = body.api_key.strip() or setting("llm_api_key")
+    if p["needs_key"] and not key:
+        return _with_message({"ok": False, "code": "missing", "detail": "api key"}, body.lang)
+    res = setup_checks.check_llm(model, base, key, _ssl_verify())
+    if body.save and (res["ok"] or (body.force and res.get("code") == "no_tools")):
+        save_settings({"llm_provider": body.provider, "llm_model": model, "llm_base_url": base, "llm_api_key": key,
+                       **({"lang": _lang(body.lang)} if body.lang else {})})
+        res = {**res, "saved": True}
+    return _with_message({**res, "model": model}, body.lang)
+
+
+class SetupGit(BaseModel):
+    provider: str = "github"
+    url: str = ""
+    token: str = ""          # empty = keep the token saved in devops
+    namespace: str = ""
+    visibility: str = "private"
+    insecure: bool = False
+    lang: str = ""
+    save: bool = True
+
+
+@app.post("/api/setup/git", dependencies=[Depends(auth)])
+def setup_git(body: SetupGit):
+    """Forwarded to devops: the Git token is checked and kept there, never stored by the lead."""
+    payload = body.model_dump(exclude={"lang"})
+    try:
+        r = httpx.post(f"{WORKERS['devops']}/config/git", json=payload, headers=internal_headers("devops"), timeout=60)
+        r.raise_for_status()
+        res = r.json()
+    except Exception as e:  # noqa: BLE001
+        res = {"ok": False, "code": "devops_down", "detail": str(e)[:300]}
+    if res.get("ok") and body.save:
+        save_settings({"git_provider": "github" if body.provider == "github" else "gitlab"})
+    return _with_message(res, body.lang)
+
+
+class SetupUI(BaseModel):
+    user: str = "admin"
+    password: str = ""
+    lang: str = ""
+
+
+@app.post("/api/setup/ui", dependencies=[Depends(auth)])
+def setup_ui(body: SetupUI):
+    """Password of the web interface (Basic Auth) and the language. Empty password = keep it."""
+    values = {}
+    if body.lang:
+        values["lang"] = _lang(body.lang)
+    if body.password:
+        if len(body.password) < 8:
+            raise HTTPException(400, "password_short")
+        values.update(ui_user=body.user.strip() or "admin", ui_hash=_hash_password(body.password))
+    if values:
+        save_settings(values)
+    return {"ok": True}
 
 
 @app.get("/health")

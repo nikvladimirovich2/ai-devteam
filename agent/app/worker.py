@@ -2,6 +2,7 @@
 Takes a task from the lead, runs a single-agent CrewAI Crew with its own LLM key."""
 from __future__ import annotations
 
+import json
 import os
 import pathlib
 import threading
@@ -13,8 +14,9 @@ from pydantic import BaseModel
 
 from crewai import Agent, Crew, Process, Task
 
-from common import (ROLE, WORKSPACE, build_llm, emit, env, require_secret, set_task_context,
-                    share_with_shell, step_callback, token_ok, workspace_tools)
+from common import (ROLE, WORKSPACE, build_llm, emit, env, require_secret, set_overrides, set_task_context,
+                    share_with_shell, step_callback, token_ok, ui_lang, workspace_tools)
+from setup_checks import hint
 from roles import COMMON_RULES, ROLES
 
 require_secret()
@@ -32,6 +34,46 @@ def from_lead(x_devteam_role: str = Header(""), x_devteam_token: str = Header(""
 _lock = threading.Lock()
 _state = {"busy": False, "task_id": "", "since": 0.0}
 
+# Settings a job may carry from the lead's setup wizard (never Git secrets: those live in devops).
+_P = ROLE.upper()
+CONFIG_KEYS = {"LLM_MODEL", "LLM_BASE_URL", "LLM_API_KEY", f"{_P}_API_KEY", f"{_P}_MODEL", "LLM_SSL_VERIFY_DISABLE",
+               "LLM_FUNCTION_CALLING", "LLM_CONTEXT_WINDOW", "LLM_MAX_TOKENS", "UI_LANG"}
+
+# devops only: Git settings from the wizard, in a volume only the agent user can read (0700/0600;
+# the shell user "runner" cannot). A GIT_TOKEN in .env still wins over it.
+GIT_STORE = pathlib.Path(os.environ.get("GIT_STORE", "/devops-data/git.json"))
+GIT_KEYS = ("GIT_PROVIDER", "GIT_URL", "GIT_TOKEN", "GIT_NAMESPACE", "GIT_VISIBILITY", "GIT_SSL_VERIFY_DISABLE")
+
+
+def _git_saved() -> dict:
+    if ROLE != "devops":
+        return {}
+    try:
+        return {k: v for k, v in json.loads(GIT_STORE.read_text()).items() if k in GIT_KEYS}
+    except (OSError, ValueError):
+        return {}
+
+
+def _save_git(values: dict) -> None:
+    GIT_STORE.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        os.chmod(GIT_STORE.parent, 0o700)
+    except OSError:
+        pass
+    tmp = GIT_STORE.with_suffix(".tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        json.dump(values, f)
+    os.replace(tmp, GIT_STORE)
+
+
+set_overrides(_git_saved())
+
+
+def apply_config(config: dict) -> None:
+    """The settings of one job: saved Git settings (devops) + what the lead sent for this role."""
+    set_overrides({**_git_saved(), **{k: v for k, v in (config or {}).items() if k in CONFIG_KEYS}})
+
 
 class RunReq(BaseModel):
     task_id: str
@@ -40,6 +82,7 @@ class RunReq(BaseModel):
     instruction: str
     expected_output: str = "Short report on what was done"
     context: str = ""
+    config: dict = {}
 
 
 def make_agent() -> Agent:
@@ -111,9 +154,49 @@ def ci(req: CiReq):
     return ci_status(req.project_name, req.sha)
 
 
+class GitConfig(BaseModel):
+    provider: str = ""
+    url: str = ""
+    token: str = ""          # empty = keep the saved token
+    namespace: str = ""
+    visibility: str = "private"
+    insecure: bool = False
+    save: bool = True
+
+
+@app.post("/config/git", dependencies=[Depends(from_lead)])
+def config_git(req: GitConfig):
+    """Setup wizard: check the Git access and (when it works) keep it for publishing. devops only."""
+    if ROLE != "devops":
+        raise HTTPException(404)
+    from repo_tool import check_access, detect_provider
+    saved = _git_saved()
+    url = (req.url or ("https://github.com" if req.provider == "github" else "")).strip().rstrip("/")
+    values = {"GIT_PROVIDER": detect_provider(url, req.provider), "GIT_URL": url,
+              "GIT_TOKEN": req.token.strip() or saved.get("GIT_TOKEN", ""), "GIT_NAMESPACE": req.namespace.strip(),
+              "GIT_VISIBILITY": req.visibility if req.visibility in ("private", "internal", "public") else "private",
+              "GIT_SSL_VERIFY_DISABLE": "1" if req.insecure else "0"}
+    c = {"url": url, "token": values["GIT_TOKEN"], "namespace": values["GIT_NAMESPACE"],
+         "insecure": req.insecure, "provider": values["GIT_PROVIDER"]}
+    res = check_access(c)
+    if res.get("ok") and req.save:
+        _save_git(values)
+        set_overrides(values)
+    return res
+
+
+def _git_status() -> dict:
+    if ROLE != "devops":
+        return {}
+    from repo_tool import cfg
+    c = cfg()
+    return {"git": {"configured": bool(c["url"] and c["token"]), "provider": c["provider"], "url": c["url"],
+                    "namespace": c["namespace"], "from_env": bool(os.environ.get("GIT_TOKEN", "").strip())}}
+
+
 @app.get("/health")
 def health():
-    return {"role": ROLE, **_state}
+    return {"role": ROLE, **_state, **_git_status()}
 
 
 def usage_of(obj) -> dict:
@@ -153,6 +236,7 @@ def run(req: RunReq):
         raise HTTPException(409, f"{ROLE} is busy with {_state['task_id']}")
     try:
         _state.update(busy=True, task_id=req.task_id, since=time.time())
+        apply_config(req.config)
         proj.mkdir(parents=True, exist_ok=True)
         share_with_shell(proj)
         set_task_context(req.task_id, str(proj))
@@ -171,7 +255,8 @@ def run(req: RunReq):
         return {"ok": True, "output": text, "usage": report_usage(req, crew, t0)}
     except Exception as e:
         tb = traceback.format_exc()
-        emit("error", f"✖ {req.title}: {e}\n{tb[-2000:]}")
+        h = hint(e, ui_lang())
+        emit("error", f"✖ {req.title}: {e}" + (f"\n{h}" if h else "") + f"\n{tb[-2000:]}")
         return {"ok": False, "output": f"ERROR: {e}",
                 "usage": report_usage(req, locals().get("crew"), locals().get("t0", time.time()))}
     finally:
