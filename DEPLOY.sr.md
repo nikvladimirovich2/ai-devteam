@@ -386,6 +386,11 @@ Briše ih samo **uklanjanje sa podacima**. Repozitorijumi već objavljeni na Git
 nije ostao nijedan drugi WSL kontejner ni image, briše i disk virtuelne mašine WSL kontejnera
 (`%LOCALAPPDATA%\wslc\sessions\…\storage.vhdx`), čime se vraća preostali prostor na disku. Sam WSL ostaje instaliran.
 
+> **Običan PowerShell i PowerShell administratora.** WSL čuva kontejnere običnog korisnika i administratora
+> odvojeno (dve «sesije» sa sopstvenim podacima). Instalirajte i pokrećite AI DevTeam u **običnom** PowerShell-u —
+> tako rade i prečice na radnoj površini; kao administrator instaler se ne pokreće. `wslc-down.ps1` i
+> `uninstall.ps1` čiste sve sesije kojima mogu da pristupe; pokrenuti kao administrator, vide i običnu.
+
 ### Linux / macOS (instalirano preko `install.sh`)
 
 ```bash

@@ -2,13 +2,20 @@
 
 Format: [Keep a Changelog](https://keepachangelog.com/), versions: [SemVer](https://semver.org/).
 
-## [Unreleased]
+## [0.2.2] - 2026-11-22
 
 ### Added
 - Stop / start / update / uninstall guide (DEPLOY.md § 12, all languages); `scripts/uninstall.ps1` for Windows
   (keeps or deletes the data, gives the WSL container disk back), an «AI DevTeam - stop» desktop shortcut;
   `install.sh --uninstall [--keep-data]` for Linux/macOS.
 - CI tests `install.sh` end to end: install, stop/start, uninstall.
+
+### Fixed
+- Windows: WSL keeps separate containers for a normal and an administrator PowerShell. The installer now refuses to
+  run as administrator (the desktop shortcuts would not see that team), `wslc-up.ps1` warns when a copy runs in the
+  other session, `wslc-down.ps1` / `uninstall.ps1` clean every session they can open.
+- `uninstall.ps1` also removes untagged images left by updates and deletes the WSL container disk reliably.
+- The installer warns when there is less than 5 GB free and stops below 3 GB.
 
 ## [0.2.1] - 2026-11-22
 

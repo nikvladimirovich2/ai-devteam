@@ -10,6 +10,28 @@
     $ref = if ($env:DEVTEAM_REF) { $env:DEVTEAM_REF } else { "main" }
     $dir = if ($env:DEVTEAM_DIR) { $env:DEVTEAM_DIR } else { Join-Path $HOME "ai-devteam" }
 
+    # 0. A normal (not administrator) PowerShell: wslc keeps separate containers for administrators,
+    #    so a team installed as administrator is invisible to the desktop shortcuts (normal user).
+    $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
+        [Security.Principal.WindowsBuiltInRole]::Administrator)
+    if ($isAdmin -and -not $env:DEVTEAM_ALLOW_ADMIN) {
+        Write-Host ""
+        Write-Host "PowerShell runs as administrator." -ForegroundColor Yellow
+        Write-Host "Please close it and run the same command in a NORMAL PowerShell (not 'Run as administrator')."
+        Write-Host "WSL keeps the containers of administrators separately, and the desktop shortcuts run without"
+        Write-Host "administrator rights, so they would not find this installation."
+        Write-Host "(Administrator rights are needed only once, for 'wsl --install --no-distribution'.)"
+        return
+    }
+
+    # Free space: image ~1.7 GB + the WSL container disk grows to ~3 GB
+    $drive = (Get-Item $env:LOCALAPPDATA).PSDrive
+    $freeGb = [math]::Round($drive.Free / 1GB, 1)
+    if ($freeGb -lt 5) {
+        Write-Host "Only $freeGb GB free on drive $($drive.Name):. AI DevTeam needs about 5 GB." -ForegroundColor Yellow
+        if ($freeGb -lt 3) { Write-Host "Free some space and run the installer again."; return }
+    }
+
     # 1. WSL containers (wslc ships with WSL 3.0.1+)
     if (-not (Get-Command wslc.exe -ErrorAction SilentlyContinue)) {
         if (Get-Command wsl.exe -ErrorAction SilentlyContinue) {

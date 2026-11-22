@@ -386,6 +386,10 @@ wslc image prune -a -f
 如果系统中已没有其他 WSL 容器或镜像，还会删除 WSL 容器虚拟机的磁盘
 （`%LOCALAPPDATA%\wslc\sessions\…\storage.vhdx`），从而释放剩余的磁盘空间。WSL 本身仍保持安装。
 
+> **普通 PowerShell 与管理员 PowerShell。** WSL 将普通用户和管理员的容器分开保存（两个拥有各自数据的“会话”）。
+> 请在**普通** PowerShell 中安装和启动 AI DevTeam——桌面快捷方式也是这样运行的；安装程序拒绝以管理员身份运行。
+> `wslc-down.ps1` 和 `uninstall.ps1` 会清理它们能访问的所有会话；以管理员身份运行时也能看到普通会话。
+
 ### Linux / macOS（通过 `install.sh` 安装）
 
 ```bash

@@ -387,6 +387,11 @@ with data** deletes them. Repositories already published to GitHub/GitLab are ne
 container VM (`%LOCALAPPDATA%\wslc\sessions\…\storage.vhdx`), which gives the remaining disk space back.
 WSL itself stays installed.
 
+> **Normal vs administrator PowerShell.** WSL keeps the containers of a normal user and of an administrator
+> apart (two «sessions» with their own data). Install and start AI DevTeam in a **normal** PowerShell — the
+> desktop shortcuts run that way; the installer refuses to run as administrator. `wslc-down.ps1` and
+> `uninstall.ps1` clean every session they can open; started as administrator they also see the normal one.
+
 ### Linux / macOS (installed with `install.sh`)
 
 ```bash

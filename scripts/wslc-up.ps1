@@ -70,6 +70,20 @@ function Invoke-Wslc { $ErrorActionPreference = "Continue"; & wslc.exe @args; if
 # PowerShell 5.1 turns a native command's stderr into an error under "Stop": probe with "Continue"
 function Test-Wslc { $ErrorActionPreference = "Continue"; & wslc.exe @args *> $null; return $LASTEXITCODE -eq 0 }
 
+# ---------- the same team started from another «session»?
+# wslc keeps separate containers for a normal and for an administrator PowerShell: warn when the
+# team already runs in the other one (it would hold the port and have its own data).
+$admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+$other = if ($admin) { "wslc-cli-$env:USERNAME" } else { "wslc-cli-admin-$env:USERNAME" }
+$ErrorActionPreference = "Continue"
+$otherList = & wslc.exe --session $other list 2>$null
+$ErrorActionPreference = "Stop"
+if ($LASTEXITCODE -eq 0 -and ($otherList | Select-String "devteam-lead")) {
+    Write-Host "Note: AI DevTeam is also running $(if ($admin) { 'for the normal user' } else { 'as administrator' }) (session $other)," -ForegroundColor Yellow
+    Write-Host "      with its own data. Stop that copy with scripts\wslc-down.ps1 from a $(if ($admin) { 'normal' } else { 'administrator' }) PowerShell." -ForegroundColor Yellow
+}
+if ($admin) { Write-Host "Running as administrator: the desktop shortcuts (normal user) will not see this team." -ForegroundColor Yellow }
+
 # ---------- image, network, volumes
 if ($Build) {
     Write-Host "Building $IMAGE (first time ~5-10 min)..."
