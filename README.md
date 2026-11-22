@@ -53,6 +53,8 @@ QA verdict and the link to the repository. After completion you can send a **rev
 
 **3. Give a task** and wait for the report with the link to the repository.
 
+<img src=".github/assets/setup-wizard.png" width="720" alt="Setup wizard (shown in Russian; English is one click away)">
+
 Updating: run the installer again. On Windows, after a restart: the **AI DevTeam** shortcut on the desktop.
 Company certificates (private CA): put `*.crt` into the `certs` folder of the installation and restart.
 
