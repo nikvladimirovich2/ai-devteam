@@ -8,8 +8,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         git curl ca-certificates build-essential nodejs npm sqlite3 jq procps sudo \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt /tmp/requirements.txt
-RUN pip install -r /tmp/requirements.txt
+# Exact versions (generated from requirements.in, see CONTRIBUTING.md), so every build is the same
+COPY requirements.lock /tmp/requirements.lock
+RUN pip install -r /tmp/requirements.lock
 
 # Corporate CA certificates (optional): put PEM *.crt into agent/certs/ and rebuild.
 # Added to the system store AND to certifi (litellm/httpx/requests use certifi by default).
