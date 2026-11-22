@@ -82,6 +82,10 @@
   .card .st.wait { display:block; background:var(--bg); border-left:3px solid var(--warn) }
   .card .st small { color:var(--mute); display:block; margin-top:4px }
   .card .done { color:var(--ok); font-weight:600 }
+  .role { display:grid; grid-template-columns:120px 1fr 150px auto; gap:6px; align-items:center; margin-top:8px }
+  .role .rn { font-weight:600 } .role small { grid-column:2 / 5; color:var(--mute); margin-top:-4px }
+  .role .st { grid-column:1 / 5; margin-top:0 }
+  details summary { cursor:pointer }
 </style>
 </head>
 <body>
@@ -150,6 +154,11 @@
       <button type="button" onclick="saveLLM(false)" data-t="check_save"></button></div>
     <div class="st" id="s1st"></div>
   </div>
+
+  <div class="step"><details id="rolesBox"><summary><h3 style="display:inline"><span data-t="s_roles"></span></h3></summary>
+    <p class="lead" data-t="roles_help"></p>
+    <div id="rolesList"></div>
+  </details></div>
 
   <div class="step"><h3><span data-t="s2"></span> <span class="done" id="d2"></span></h3>
     <p class="lead" data-t="s2_help"></p>
@@ -344,6 +353,33 @@ $("#prompt").addEventListener("keydown", e => { if (e.key === "Enter" && (e.ctrl
 loadTeam(); loadTasks(); setInterval(loadTeam, 4000); setInterval(loadTasks, 8000);
 
 // ---------------------------------------------------------------- setup wizard
+
+const ROLE_TIPS = {
+  ru: {lead:"план и отчёт: хватит простой и дешёвой модели со строгим JSON", architect:"сильная модель с рассуждениями",
+       backend:"лучшая модель для кода: тратит больше всего токенов", frontend:"модель для кода (HTML/CSS/JS)",
+       qa:"сильная модель: тесты и честный вердикт", devops:"модель для кода: Docker, CI, разбор логов"},
+  en: {lead:"plan and report: a simple, cheap model with strict JSON is enough", architect:"a strong reasoning model",
+       backend:"the best coding model: uses the most tokens", frontend:"a coding model (HTML/CSS/JS)",
+       qa:"a strong model: tests and an honest verdict", devops:"a coding model: Docker, CI, reading logs"},
+};
+function renderRoles() {
+  const R = SETUP.roles || {};
+  $("#rolesList").innerHTML = Object.keys(R).map(r => `<div class="role">
+      <span class="rn r-${r}">${ROLE_NAMES[r]}</span>
+      <input id="rm_${r}" list="sModels" placeholder="${esc(t("team_model"))}" value="${esc(R[r].model || "")}" ${R[r].from_env ? "disabled" : ""}>
+      <input id="rk_${r}" type="password" autocomplete="off" placeholder="${esc(R[r].own_key ? "•••• (" + t("own_key") + ")" : t("team_key"))}" ${R[r].from_env ? "disabled" : ""}>
+      <button class="sec sm" type="button" onclick="saveRole('${r}')" ${R[r].from_env ? "disabled" : ""}>${esc(t("check_save"))}</button>
+      <small>${esc((ROLE_TIPS[LANG] || ROLE_TIPS.en)[r])} · ${esc(t("now"))}: ${esc(R[r].effective || "-")}${R[r].from_env ? " (" + esc(t("from_env")) + ")" : ""}</small>
+      <div class="st" id="rs_${r}"></div></div>`).join("");
+}
+async function saveRole(r) {
+  status("#rs_" + r, "wait", t("checking"));
+  try {
+    const res = await post("/api/setup/role", {role: r, model: $("#rm_" + r).value, api_key: $("#rk_" + r).value, lang: LANG});
+    if (res.ok) { status("#rs_" + r, "ok", res.message + " " + res.model, res.detail); $("#rk_" + r).value = ""; SETUP = await api("/api/setup"); renderRoles(); }
+    else status("#rs_" + r, "bad", res.message, res.detail);
+  } catch (e) { status("#rs_" + r, "bad", e.message); }
+}
 const T = {
   ru: {setup_title:"Настройка", setup_lead:"Три шага: модель ИИ, куда публиковать проекты и пароль. Ключи хранятся только на этом сервере.",
        s1:"1. Модель ИИ", s1_help:"Выберите провайдера, вставьте ключ и выберите модель. Нужна модель, которая умеет вызывать инструменты.",
@@ -358,7 +394,9 @@ const T = {
        user:"Логин", password:"Пароль (не короче 8 символов)", ready:"✓ готово", checking:"Проверяю…", models_found:"Моделей найдено: ",
        models_none:"Список не получен, впишите название модели вручную.", save_anyway:"Всё равно сохранить",
        saved_pw:"Пароль сохранён. Браузер попросит войти.", short_pw:"Пароль короче 8 символов.", from_env:"задано в .env",
-       not_configured:"Сначала настройте модель ИИ (⚙ Настройка).", settings:"⚙ Настройка"},
+       not_configured:"Сначала настройте модель ИИ (⚙ Настройка).", settings:"⚙ Настройка",
+       s_roles:"Модели по ролям (необязательно)", roles_help:"По умолчанию все агенты работают на модели команды. Здесь можно дать роли другую модель того же провайдера, например сильную архитектору и QA, а дешёвую — тимлиду. Пустое поле = модель команды.",
+       team_model:"модель команды", team_key:"ключ команды", own_key:"свой ключ", now:"сейчас"},
   en: {setup_title:"Setup", setup_lead:"Three steps: the AI model, where to publish the projects and a password. Keys stay on this server.",
        s1:"1. AI model", s1_help:"Pick the provider, paste the key and choose a model. The model must support tool calling.",
        provider:"Provider", api_key:"API key", get_key:"get a key ↗", base_url:"Model server address", model:"Model",
@@ -372,7 +410,9 @@ const T = {
        user:"Login", password:"Password (at least 8 characters)", ready:"✓ done", checking:"Checking…", models_found:"Models found: ",
        models_none:"No list available, type the model name.", save_anyway:"Save anyway",
        saved_pw:"Password saved. The browser will ask you to log in.", short_pw:"The password is shorter than 8 characters.", from_env:"set in .env",
-       not_configured:"Set up the AI model first (⚙ Setup).", settings:"⚙ Setup"},
+       not_configured:"Set up the AI model first (⚙ Setup).", settings:"⚙ Setup",
+       s_roles:"Models per role (optional)", roles_help:"By default every agent uses the team's model. Here a role can get another model of the same provider, e.g. a strong one for the architect and QA and a cheap one for the lead. Empty = the team's model.",
+       team_model:"the team's model", team_key:"the team's key", own_key:"own key", now:"now"},
 };
 let LANG = (localStorage.getItem("lang") || (navigator.language || "en")).toLowerCase().startsWith("ru") ? "ru" : "en";
 let SETUP = null;
@@ -380,6 +420,7 @@ const t = k => (T[LANG] || T.en)[k] || k;
 function applyLang() {
   document.querySelectorAll("[data-t]").forEach(el => el.textContent = t(el.dataset.t));
   $("#sLang").value = LANG; $("#setupBtn").textContent = t("settings"); gitChanged(true);
+  if (SETUP) renderRoles();
 }
 function setLang(l) { LANG = l; localStorage.setItem("lang", l); applyLang(); post("/api/setup/ui", {lang: l}).catch(() => {}); }
 async function post(p, body) { return api(p, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)}); }
@@ -404,6 +445,7 @@ async function openSetup() {
   $("#d2").textContent = g.configured ? t("ready") + (g.from_env ? " · " + t("from_env") : "") : "";
   $("#d3").textContent = SETUP.ui.password_set ? t("ready") + (SETUP.ui.from_env ? " · " + t("from_env") : "") : "";
   if (SETUP.ui.user) $("#uUser").value = SETUP.ui.user;
+  renderRoles();
   applyLang(); $("#setup").classList.add("open");
 }
 function closeSetup() { $("#setup").classList.remove("open"); }
@@ -432,7 +474,8 @@ async function saveLLM(force) {
   try {
     const r = await post("/api/setup/llm", {provider: $("#sProv").value, model: $("#sModel").value, base_url: $("#sBase").value,
                                             api_key: $("#sKey").value, lang: LANG, force});
-    if (r.ok || r.saved) { status("#s1st", "ok", r.message + " " + r.model, r.detail); $("#d1").textContent = t("ready"); $("#sKey").value = ""; }
+    if (r.ok || r.saved) { status("#s1st", "ok", r.message + " " + r.model, r.detail); $("#d1").textContent = t("ready"); $("#sKey").value = "";
+                           SETUP = await api("/api/setup"); renderRoles(); }
     else {
       status("#s1st", "bad", r.message, r.detail);
       if (r.code === "no_tools") $("#s1st").insertAdjacentHTML("beforeend", ` <button class="sec sm" onclick="saveLLM(true)">${t("save_anyway")}</button>`);

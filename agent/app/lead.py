@@ -31,7 +31,7 @@ from pydantic import BaseModel
 
 from crewai import Agent, Crew, Process, Task
 
-from common import (WORKSPACE, build_llm, env, env_bool, extract_json, internal_headers, require_secret, set_overrides,
+from common import (WORKSPACE, build_llm, env, env_bool, extract_json, model_of, internal_headers, require_secret, set_overrides,
                     token_ok, ui_lang)
 import setup_checks
 from roles import ROLES
@@ -138,19 +138,32 @@ def save_settings(values: dict[str, str]) -> None:
     apply_settings()
 
 
+TEAM_ROLES = ("lead", "architect", "backend", "frontend", "qa", "devops")
+
+
 def model_settings() -> dict[str, str]:
     """What the setup wizard saved for the model, in the names the agents read (env wins over it)."""
     return {"LLM_MODEL": setting("llm_model"), "LLM_BASE_URL": setting("llm_base_url"),
             "LLM_API_KEY": setting("llm_api_key"), "UI_LANG": setting("lang")}
 
 
+def role_settings(role: str) -> dict[str, str]:
+    """A role's own model / key from the wizard (same provider and server as the team)."""
+    p = role.upper()
+    return {f"{p}_MODEL": setting(f"role_model_{role}"), f"{p}_API_KEY": setting(f"role_key_{role}")}
+
+
 def apply_settings() -> None:
-    set_overrides({k: v for k, v in model_settings().items() if v})
+    values = model_settings()
+    for r in TEAM_ROLES:
+        values.update(role_settings(r))     # the lead reports every role's model; it uses only its own key
+    set_overrides({k: v for k, v in values.items() if v})
 
 
 def worker_config(role: str) -> dict[str, str]:
-    """Settings sent with every job. Values from .env are the worker's own and win over these."""
-    return {k: v for k, v in model_settings().items() if v}
+    """Settings sent with every job: the team's model + this role's own model/key, never other roles' keys.
+    Values from .env are the worker's own and win over these."""
+    return {k: v for k, v in {**model_settings(), **role_settings(role)}.items() if v}
 
 
 apply_settings()
@@ -220,6 +233,7 @@ def lead_llm(task_id: str, instruction: str, expected: str) -> str:
         u = {k: int(d.get(k) or 0) for k in ("prompt_tokens", "completion_tokens", "total_tokens",
                                               "cached_prompt_tokens", "reasoning_tokens", "successful_requests")}
         u["seconds"] = int(time.time() - t0)
+        u["model"] = model_of("lead")
         add_event(task_id, "lead", "usage", f"🔢 {expected}: {u['total_tokens']:,} tokens".replace(",", " "),
                   {"usage": u, "title": expected})
 
@@ -313,8 +327,10 @@ def build_report(task_id: str, since_event: int = 0) -> str:
             continue
         u = e["extra"].get("usage", {})
         r = per.setdefault(e["role"], {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0,
-                                       "total_tokens": 0, "successful_requests": 0, "seconds": 0})
+                                       "total_tokens": 0, "successful_requests": 0, "seconds": 0, "models": []})
         r["calls"] += 1
+        if u.get("model") and u["model"] not in r["models"]:
+            r["models"].append(u["model"])
         for k in ("prompt_tokens", "completion_tokens", "total_tokens", "successful_requests", "seconds"):
             r[k] += int(u.get(k) or 0)
     tot = {k: sum(r[k] for r in per.values()) for k in ("prompt_tokens", "completion_tokens", "total_tokens",
@@ -396,12 +412,13 @@ def build_report(task_id: str, since_event: int = 0) -> str:
         L.append("  " + ", ".join(files[:25]) + (" …" if len(files) > 25 else ""))
     L.append("")
     L.append("TOKENS:")
-    L.append(f"  {'role':<11}{'calls':>7}{'requests':>10}{'input':>13}{'output':>12}{'total':>13}")
+    L.append(f"  {'role':<11}{'calls':>7}{'requests':>10}{'input':>13}{'output':>12}{'total':>13}   model")
     for role in ("lead", "architect", "backend", "frontend", "qa", "devops"):
         if role in per:
             r = per[role]
             L.append(f"  {ROLE_TITLES[role]:<11}{r['calls']:>7}{r['successful_requests']:>10}"
-                     f"{_fmt(r['prompt_tokens']):>13}{_fmt(r['completion_tokens']):>12}{_fmt(r['total_tokens']):>13}")
+                     f"{_fmt(r['prompt_tokens']):>13}{_fmt(r['completion_tokens']):>12}{_fmt(r['total_tokens']):>13}"
+                     f"   {', '.join(r['models']) or '-'}")
     L.append(f"  {'-' * 64}")
     L.append(f"  {'TOTAL':<11}{tot['calls']:>7}{tot['successful_requests']:>10}"
              f"{_fmt(tot['prompt_tokens']):>13}{_fmt(tot['completion_tokens']):>12}{_fmt(tot['total_tokens']):>13}")
@@ -950,6 +967,9 @@ async def setup_status():
         "llm": {"configured": bool(env("LLM_MODEL")), "provider": setting("llm_provider"), "model": env("LLM_MODEL"),
                 "base_url": env("LLM_BASE_URL"), "has_key": bool(env("LLM_API_KEY") or env("LEAD_API_KEY")),
                 "from_env": bool(os.environ.get("LLM_MODEL", "").strip())},
+        "roles": {r: {"model": setting(f"role_model_{r}"), "own_key": bool(setting(f"role_key_{r}")),
+                      "from_env": bool(os.environ.get(f"{r.upper()}_MODEL", "").strip()), "effective": model_of(r)}
+                  for r in TEAM_ROLES},
         "git": git,
         "ui": {"password_set": bool((env("UI_USER") and env("UI_PASSWORD")) or setting("ui_hash")),
                "from_env": bool(env("UI_USER") and env("UI_PASSWORD")), "user": setting("ui_user") or env("UI_USER")},
@@ -992,8 +1012,41 @@ def setup_llm(body: SetupLLM):
         return _with_message({"ok": False, "code": "missing", "detail": "api key"}, body.lang)
     res = setup_checks.check_llm(model, base, key, _ssl_verify())
     if body.save and (res["ok"] or (body.force and res.get("code") == "no_tools")):
+        if setting("llm_provider") and setting("llm_provider") != body.provider:
+            # role models belong to the old provider: back to the team's model
+            save_settings({f"role_{k}_{r}": "" for r in TEAM_ROLES for k in ("model", "key")})
         save_settings({"llm_provider": body.provider, "llm_model": model, "llm_base_url": base, "llm_api_key": key,
                        **({"lang": _lang(body.lang)} if body.lang else {})})
+        res = {**res, "saved": True}
+    return _with_message({**res, "model": model}, body.lang)
+
+
+class SetupRole(BaseModel):
+    role: str
+    model: str = ""          # empty = back to the team's model
+    api_key: str = ""        # empty = the team's key (or keep this role's saved key)
+    lang: str = ""
+
+
+@app.post("/api/setup/role", dependencies=[Depends(auth)])
+def setup_role(body: SetupRole):
+    """A role's own model, on the team's provider/server (MODELS.md: strong model for the architect and QA,
+    a coding model for backend/frontend/devops, a cheap one for the lead)."""
+    if body.role not in TEAM_ROLES:
+        raise HTTPException(400, "unknown role")
+    if not setting("llm_model") and not env("LLM_MODEL"):
+        return _with_message({"ok": False, "code": "missing", "detail": "team model first"}, body.lang)
+    if not body.model.strip():
+        save_settings({f"role_model_{body.role}": "", f"role_key_{body.role}": ""})
+        return _with_message({"ok": True, "code": "ok", "saved": True, "model": model_of(body.role),
+                              "detail": "the team's model"}, body.lang)
+    provider = setting("llm_provider") or "custom"
+    model = setup_checks.model_id(provider, body.model)
+    key = body.api_key.strip() or setting(f"role_key_{body.role}") or setting("llm_api_key") or env("LLM_API_KEY")
+    res = setup_checks.check_llm(model, env("LLM_BASE_URL"), key, _ssl_verify())
+    if res["ok"]:
+        save_settings({f"role_model_{body.role}": model,
+                       **({f"role_key_{body.role}": body.api_key.strip()} if body.api_key.strip() else {})})
         res = {**res, "saved": True}
     return _with_message({**res, "model": model}, body.lang)
 

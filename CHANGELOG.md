@@ -2,6 +2,13 @@
 
 Format: [Keep a Changelog](https://keepachangelog.com/), versions: [SemVer](https://semver.org/).
 
+## [0.2.1] - 2026-11-22
+
+### Added
+- Setup wizard: **models per role** (optional): a role gets another model of the team's provider and optionally its own
+  key, with the same check; tips which model fits which role (MODELS.md). Changing the provider resets them.
+- The final report shows the model of each role next to its tokens.
+
 ## [0.2.0] - 2026-11-22
 
 Start in one step: install with one command, set up everything in the browser.

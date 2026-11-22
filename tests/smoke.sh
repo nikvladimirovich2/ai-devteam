@@ -46,6 +46,13 @@ r=$(post /api/setup/llm '{"provider":"vllm","base_url":"http://mockllm:9000/v1",
 echo "llm: $r"
 [[ $(json 'd["ok"] and d.get("saved", False)' <<<"$r") == True ]] || fail "model check/save"
 curl -fs "$B/api/setup" | grep -q "sk-smoke-SECRET" && fail "the key is returned by /api/setup"
+# a role with its own model (same provider/server): architect on another model, with its own key
+r=$(post /api/setup/role '{"role":"architect","model":"mock-architect","api_key":"sk-architect-SECRET"}')
+echo "role: $r"
+[[ $(json 'd["ok"] and d["model"] == "hosted_vllm/mock-architect"' <<<"$r") == True ]] || fail "role model check/save"
+[[ $(curl -fs "$B/api/setup" | json 'd["roles"]["architect"]["effective"] + " " + d["roles"]["backend"]["effective"]') == "hosted_vllm/mock-architect hosted_vllm/mock" ]] \
+  || fail "effective role models"
+curl -fs "$B/api/setup" | grep -q "sk-architect-SECRET" && fail "a role key is returned by /api/setup"
 r=$(post /api/setup/git '{"provider":"gitlab","url":"http://no-such-git.invalid","token":"glpat-smoke","namespace":"x","lang":"ru"}')
 echo "git: $r"
 [[ $(json 'd["code"]' <<<"$r") == unreachable ]] || fail "git check of a missing host should say unreachable"
@@ -63,6 +70,8 @@ echo "$report" | head -30
 [[ "$status" == done_no_push ]] || fail "task status $status (expected done_no_push)"
 grep -q "QA: passed" <<<"$report" || fail "QA did not pass"
 grep -q "backend/test_app.py" <<<"$report" || fail "backend file missing"
+grep -E "^ +Architect .*hosted_vllm/mock-architect$" <<<"$report" >/dev/null || fail "report: architect model"
+grep -E "^ +Backend .*hosted_vllm/mock$" <<<"$report" >/dev/null || fail "report: backend model"
 
 echo "== isolation of the agents"
 # the shell user of the agents cannot read the agent's environment, nor the devops Git store

@@ -152,6 +152,12 @@ def _context_window(model: str, api_key: str) -> int:
     return val
 
 
+def model_of(role: str = ROLE) -> str:
+    """The model a role works with: its own <ROLE>_MODEL, else the team's LLM_MODEL."""
+    p = _PREFIX_ROLE.get(role, role.upper())
+    return env(f"{p}_MODEL") or env("LLM_MODEL")
+
+
 def build_llm(role: str = ROLE) -> LLM:
     """Each role uses its OWN api key (<ROLE>_API_KEY) and optionally its own model."""
     p = _PREFIX_ROLE.get(role, role.upper())

@@ -1,6 +1,8 @@
 # Which model for which role
 
-Each role can use its own model (`<ROLE>_MODEL` in `.env`; empty = `LLM_MODEL`) and always uses its own key.
+Each role can use its own model: in the browser (⚙ Setup → **Models per role**) or with `<ROLE>_MODEL` in `.env`
+(empty = the team's model). A role may also get its own key. All roles use the same provider / model server;
+the final report shows which model each role used next to its tokens.
 The roles load the model very differently, so a mixed setup is usually both cheaper and better than
 «the biggest model everywhere».
 

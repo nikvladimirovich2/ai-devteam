@@ -20,6 +20,9 @@ Each item has a GitHub issue; ✅ = done.
 - Notification when a task is done (Telegram, e-mail).
 - The whole interface in English and Russian.
 
+- Android projects: an optional image with JDK, Android SDK and Gradle, so QA builds the APK and runs
+  JVM/Robolectric tests inside the team (today Android code is checked only by CI).
+
 ## Stage 3 — catch up with the established agents (0.4+)
 - Work on an existing repository: import, issue → merge request with review.
 - A separate sandbox container per task, several tasks in parallel.

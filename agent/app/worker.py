@@ -14,7 +14,7 @@ from pydantic import BaseModel
 
 from crewai import Agent, Crew, Process, Task
 
-from common import (ROLE, WORKSPACE, build_llm, emit, env, require_secret, set_overrides, set_task_context,
+from common import (ROLE, WORKSPACE, build_llm, emit, env, model_of, require_secret, set_overrides, set_task_context,
                     share_with_shell, step_callback, token_ok, ui_lang, workspace_tools)
 from setup_checks import hint
 from roles import COMMON_RULES, ROLES
@@ -220,6 +220,7 @@ def usage_of(obj) -> dict:
 def report_usage(req, crew, t0: float) -> dict:
     u = usage_of(crew)
     u["seconds"] = int(time.time() - t0)
+    u["model"] = model_of(ROLE)
     emit("usage", f"🔢 {req.title}: {u.get('total_tokens', 0):,} tokens "
                   f"(in {u.get('prompt_tokens', 0):,} / out {u.get('completion_tokens', 0):,}, "
                   f"requests {u.get('successful_requests', 0)})".replace(",", " "),
