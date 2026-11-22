@@ -1,0 +1,11 @@
+# Build the image from this source tree instead of pulling the prebuilt one:
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+services:
+  lead: &build
+    build: ./agent
+    image: ${DEVTEAM_IMAGE:-devteam-agent:latest}
+  architect: *build
+  backend: *build
+  frontend: *build
+  qa: *build
+  devops: *build

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # End-to-end smoke test without a real model or Git host (runs in CI, works locally with Docker):
-# builds the image, starts the 6 agents + the mock LLM, runs one task through every role, and
-# checks the agent isolation. Publishing fails on purpose (no Git host): status done_no_push.
+# builds the image, starts the 6 agents + the mock LLM, configures them through the setup wizard
+# API (like a user in the browser), runs one task through every role and checks the isolation.
+# Publishing fails on purpose (no Git host): status done_no_push.
 #
 #   bash tests/smoke.sh          # KEEP=1 leaves the containers running
 set -euo pipefail
@@ -10,18 +11,18 @@ cd "$(dirname "$0")/.."
 ENV_FILE="$(mktemp)"
 PORT=18080
 {
-  echo "LLM_MODEL=openai/mock"
-  echo "LLM_BASE_URL=http://mockllm:9000/v1"
-  for r in LEAD ARCHITECT BACKEND FRONTEND QA DEVOPS; do echo "${r}_API_KEY=mock-${r,,}"; done
+  echo "DEVTEAM_IMAGE=devteam-agent:latest"
   echo "INTERNAL_SECRET=$(openssl rand -hex 32)"
   echo "UI_PORT=$PORT"
   echo "MAX_CI_ROUNDS=0"
 } > "$ENV_FILE"
-DC=(docker compose --env-file "$ENV_FILE" -f docker-compose.yml -f tests/docker-compose.ci.yml)
+DC=(docker compose --env-file "$ENV_FILE" -f docker-compose.yml -f docker-compose.build.yml -f tests/docker-compose.ci.yml)
 
 fail() { echo "FAIL: $*"; "${DC[@]}" ps; "${DC[@]}" logs --tail 80; exit 1; }
 cleanup() { [[ "${KEEP:-0}" == 1 ]] || "${DC[@]}" down -v --remove-orphans >/dev/null 2>&1 || true; rm -f "$ENV_FILE"; }
 trap cleanup EXIT
+json() { python3 -c "import json,sys; d=json.load(sys.stdin); print($1)"; }
+post() { curl -fs -X POST "$B$1" -H 'Content-Type: application/json' -d "$2" "${@:3}"; }
 
 "${DC[@]}" build
 "${DC[@]}" up -d
@@ -37,23 +38,37 @@ for i in $(seq 1 60); do
   sleep 5
 done
 
+echo "== setup wizard"
+[[ $(curl -fs "$B/api/setup" | json 'd["llm"]["configured"]') == False ]] || fail "model configured before setup"
+code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$B/api/tasks" -H 'Content-Type: application/json' -d '{"prompt":"x"}')
+[[ "$code" == 400 ]] || fail "task accepted without a model ($code)"
+r=$(post /api/setup/llm '{"provider":"vllm","base_url":"http://mockllm:9000/v1","model":"mock","api_key":"sk-smoke-SECRET","lang":"ru"}')
+echo "llm: $r"
+[[ $(json 'd["ok"] and d.get("saved", False)' <<<"$r") == True ]] || fail "model check/save"
+curl -fs "$B/api/setup" | grep -q "sk-smoke-SECRET" && fail "the key is returned by /api/setup"
+r=$(post /api/setup/git '{"provider":"gitlab","url":"http://no-such-git.invalid","token":"glpat-smoke","namespace":"x","lang":"ru"}')
+echo "git: $r"
+[[ $(json 'd["code"]' <<<"$r") == unreachable ]] || fail "git check of a missing host should say unreachable"
+grep -q "Сервер не отвечает" <<<"$r" || fail "no Russian message"
+
 echo "== one task through every role"
-TID=$(curl -fs -X POST "$B/api/tasks" -H 'Content-Type: application/json' -d '{"prompt":"Tiny TODO API (smoke test)"}' \
-  | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
+TID=$(post /api/tasks '{"prompt":"Tiny TODO API (smoke test)"}' | json 'd["id"]')
 status=""
 for i in $(seq 1 60); do
-  status=$(curl -fs "$B/api/tasks/$TID" | python3 -c 'import json,sys; print(json.load(sys.stdin)["status"])')
+  status=$(curl -fs "$B/api/tasks/$TID" | json 'd["status"]')
   case "$status" in running|queued|pending) sleep 5 ;; *) break ;; esac
 done
-report=$(curl -fs "$B/api/tasks/$TID/report" | python3 -c 'import json,sys; print(json.load(sys.stdin)["report"])')
+report=$(curl -fs "$B/api/tasks/$TID/report" | json 'd["report"]')
 echo "$report" | head -30
 [[ "$status" == done_no_push ]] || fail "task status $status (expected done_no_push)"
 grep -q "QA: passed" <<<"$report" || fail "QA did not pass"
 grep -q "backend/test_app.py" <<<"$report" || fail "backend file missing"
 
 echo "== isolation of the agents"
-# the shell user of the agents cannot read the agent's environment (API key, Git token)
+# the shell user of the agents cannot read the agent's environment, nor the devops Git store
 if docker exec -u runner devteam-devops sh -c 'cat /proc/1/environ >/dev/null 2>&1'; then fail "runner can read /proc/1/environ"; fi
+if docker exec -u runner devteam-devops sh -c 'ls /devops-data >/dev/null 2>&1'; then fail "runner can read /devops-data"; fi
+if docker exec -u runner devteam-lead sh -c 'ls /data >/dev/null 2>&1'; then fail "runner can read the lead database"; fi
 # through the real tool path (sudo env -i): no secrets in the command's environment
 n=$(docker exec -w /app devteam-backend python -c '
 import subprocess, common
@@ -61,8 +76,14 @@ r = subprocess.run(common.shell_argv("env | grep -cE \"API_KEY|SECRET|TOKEN\" ||
 print(r.stdout.strip())')
 [[ "$n" == 0 ]] || fail "secrets in the shell environment: $n"
 # internal endpoints reject calls without the token
-for url in http://devops:8000/publish http://devops:8000/run http://lead:8000/api/internal/events; do
+for url in http://devops:8000/publish http://devops:8000/run http://devops:8000/config/git http://lead:8000/api/internal/events; do
   code=$(docker exec -u runner devteam-backend curl -s -o /dev/null -w '%{http_code}' -X POST "$url" -H 'Content-Type: application/json' -d '{"task_id":"x","role":"devops","kind":"gitlab","message":"forged"}')
   [[ "$code" == 403 ]] || fail "$url without token -> $code (expected 403)"
 done
+
+echo "== interface password"
+post /api/setup/ui '{"user":"admin","password":"smoke-pass-123"}' >/dev/null
+code=$(curl -s -o /dev/null -w '%{http_code}' "$B/api/tasks")
+[[ "$code" == 401 ]] || fail "no password asked after setting one ($code)"
+curl -fs -u admin:smoke-pass-123 "$B/api/tasks" >/dev/null || fail "login with the new password"
 echo "OK: smoke test passed"

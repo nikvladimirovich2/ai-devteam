@@ -16,13 +16,18 @@ x-llm-env: &llm-env
   WORKSPACE: /workspace
   # signs requests between the services (required, >= 32 chars): openssl rand -hex 32
   INTERNAL_SECRET: ${INTERNAL_SECRET:?set INTERNAL_SECRET in .env (openssl rand -hex 32)}
+  # one key for the whole team (or a personal <ROLE>_API_KEY per service below)
+  LLM_API_KEY: ${LLM_API_KEY:-}
 
 x-agent: &agent
-  build: ./agent
-  image: devteam-agent:latest
+  # prebuilt image from GitHub (building from source: docker-compose.build.yml, see CONTRIBUTING.md)
+  image: ${DEVTEAM_IMAGE:-ghcr.io/nikvladimirovich2/ai-devteam:latest}
   restart: unless-stopped
   volumes:
     - workspace:/workspace          # shared working directory of the projects
+    - ${CERTS_DIR:-./agent/certs}:/certs:ro   # company CA certificates (*.crt), optional
+  extra_hosts:
+    - "host.docker.internal:host-gateway"     # a model server (Ollama) on this machine
   networks: [team]
 
 services:
@@ -44,6 +49,7 @@ services:
     volumes:
       - workspace:/workspace
       - leaddata:/data
+      - ${CERTS_DIR:-./agent/certs}:/certs:ro
     ports:
       - "${UI_BIND:-127.0.0.1}:${UI_PORT:-8080}:8000"
 
@@ -102,10 +108,15 @@ services:
       CI_POLL_INTERVAL: ${CI_POLL_INTERVAL:-15}
       GIT_AUTHOR_NAME: ${GIT_AUTHOR_NAME:-AI DevTeam}
       GIT_AUTHOR_EMAIL: ${GIT_AUTHOR_EMAIL:-ai-devteam@example.com}
+    volumes:
+      - workspace:/workspace
+      - devopsdata:/devops-data      # Git settings from the setup wizard (token), only devops
+      - ${CERTS_DIR:-./agent/certs}:/certs:ro
 
 volumes:
   workspace:
   leaddata:
+  devopsdata:
 
 networks:
   team:

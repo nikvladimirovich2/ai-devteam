@@ -2,7 +2,7 @@
 #   docker compose -f docker-compose.yml -f tests/docker-compose.test.yml up -d --build
 services:
   mockllm:
-    image: devteam-agent:latest
+    image: ${DEVTEAM_IMAGE:-devteam-agent:latest}
     container_name: devteam-mockllm
     command: ["python", "-m", "uvicorn", "mock_llm:app", "--host", "0.0.0.0", "--port", "9000", "--app-dir", "/tests"]
     volumes: ["./tests:/tests:ro"]

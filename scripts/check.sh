@@ -15,14 +15,25 @@ echo "1) .env"
 if [[ ! -f .env ]]; then bad ".env not found (cp .env.example .env)"; exit 1; fi
 perm=$(stat -c %a .env); [[ "$perm" == 600 ]] && ok ".env mode 600" || warn ".env mode $perm (recommended: chmod 600 .env)"
 get() { grep -E "^$1=" .env | tail -1 | cut -d= -f2- | sed -E "s/^'(.*)'$/\1/; s/^\"(.*)\"$/\1/"; }
+# Since 0.2 the model and Git can be set up in the browser (⚙ Setup) instead of .env:
+# then the .env checks and the model/Git checks below are done by the wizard's buttons.
+WIZARD=0
+if [[ -z "$(get LLM_MODEL)" ]]; then
+  WIZARD=1
+  warn "LLM_MODEL is not in .env: the model and Git are set up in the browser (⚙ Setup → Check and save); checks 3-5 skipped"
+fi
+if [[ $WIZARD == 0 ]]; then
 for v in LLM_MODEL LLM_BASE_URL GIT_URL GIT_TOKEN; do
   [[ -n "$(get $v)" ]] && ok "$v set" || bad "$v is empty"
 done
+fi
 s="$(get INTERNAL_SECRET)"
 (( ${#s} >= 32 )) && ok "INTERNAL_SECRET set" || bad "INTERNAL_SECRET is shorter than 32 characters (openssl rand -hex 32)"
 for r in $ROLES; do
+  [[ $WIZARD == 1 ]] && break
   V="$(echo $r | tr a-z A-Z)_API_KEY"; val="$(get $V)"
-  if [[ -z "$val" ]]; then bad "$V is empty"; continue; fi
+  if [[ -z "$val" && -n "$(get LLM_API_KEY)" ]]; then continue; fi   # one key for the whole team
+  if [[ -z "$val" ]]; then bad "$V is empty (or set LLM_API_KEY for all roles)"; continue; fi
   raw=$(grep -E "^$V=" .env | tail -1 | cut -d= -f2-)
   if [[ "$raw" == *'$'* && "$raw" != \'*\' ]]; then
     bad "$V contains \$ but is not in single quotes — Compose will cut it (use $V='...')"
@@ -38,6 +49,15 @@ for r in $ROLES; do
 done
 [[ $FAIL -ne 0 ]] && { echo; echo "Fix the problems above and run again."; exit 1; }
 
+if [[ $WIZARD == 1 ]]; then
+  echo "6) UI"
+  port=$(get UI_PORT); port=${port:-8080}
+  code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$port/health")
+  [[ "$code" == 200 ]] && ok "http://127.0.0.1:$port/health → 200" || bad "UI health → $code"
+  echo; [[ $FAIL -eq 0 ]] && echo "All checks passed. Open the UI and finish ⚙ Setup." || { echo "There are errors (see ✘)."; exit 1; }
+  exit 0
+fi
+
 echo "3) LLM: each role with its own key"
 for r in $ROLES; do
   out=$(docker exec -w /app "devteam-$r" timeout 180 python -c '
@@ -52,7 +72,8 @@ done
 echo "4) LLM tool calling (native)"
 out=$(docker exec -w /app devteam-backend timeout 180 python -c '
 import os, litellm, common
-m, base, key = os.environ["LLM_MODEL"], os.environ["LLM_BASE_URL"], os.environ["BACKEND_API_KEY"]
+m, base = os.environ["LLM_MODEL"], os.environ.get("LLM_BASE_URL") or None
+key = os.environ.get("BACKEND_API_KEY") or os.environ.get("LLM_API_KEY") or "none"
 tools=[{"type":"function","function":{"name":"write_file","description":"write a file","parameters":{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}}}]
 r = litellm.completion(model=m, api_base=base, api_key=key, tools=tools, tool_choice="auto", timeout=150,
       messages=[{"role":"user","content":"Create file hello.txt with content hi. Use the tool."}])

@@ -18,10 +18,12 @@ jobs:
           python-version: "3.12"
       - name: Python syntax
         run: python -m compileall -q agent/app tests
+      - name: Unit tests (setup wizard helpers)
+        run: pip install -q httpx pytest && python -m pytest -q tests
       - name: Shell syntax
         run: for f in scripts/*.sh tests/*.sh; do bash -n "$f"; done
       - name: Compose files
-        run: INTERNAL_SECRET=ci docker compose -f docker-compose.yml -f tests/docker-compose.ci.yml config -q
+        run: INTERNAL_SECRET=ci docker compose -f docker-compose.yml -f docker-compose.build.yml -f tests/docker-compose.ci.yml config -q
 
   smoke:
     runs-on: ubuntu-latest

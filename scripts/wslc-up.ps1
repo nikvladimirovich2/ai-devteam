@@ -1,25 +1,29 @@
 # AI DevTeam on Windows with WSL containers (wslc). wslc has no `compose` yet, so this script does
-# what docker-compose.yml does: one network, two volumes, six containers, each with ONLY its own
+# what docker-compose.yml does: one network, three volumes, six containers, each with ONLY its own
 # secrets (per-role env files, written with LF endings and deleted right after the start).
+# The model and Git are set up in the browser (⚙ Setup); .env is optional (advanced settings).
 #
-#   .\scripts\wslc-up.ps1            # build (if needed) and start
-#   .\scripts\wslc-up.ps1 -Rebuild   # rebuild the image first
+#   .\scripts\wslc-up.ps1            # download the latest image and start, opens the browser
+#   .\scripts\wslc-up.ps1 -Build     # build the image from this folder instead (developers)
 #   .\scripts\wslc-up.ps1 -Mock      # smoke test: also start the mock LLM from tests/ (no real model)
 #   .\scripts\wslc-down.ps1          # stop and remove the containers (volumes are kept)
 #
 # Differences from Docker Compose: no restart policy (after a reboot run this script again), and
 # the test GitLab from tests/docker-compose.test.yml is not started (it needs ~4 GB RAM).
-param([switch]$Rebuild, [switch]$Mock)
+param([switch]$Build, [switch]$Rebuild, [switch]$Mock, [switch]$NoBrowser)
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 
-$IMAGE = "devteam-agent:latest"
 $NET = "devteam"
 $ROLES = "lead", "architect", "backend", "frontend", "qa", "devops"
 
 # ---------- .env (same file as for Docker Compose)
-if (-not (Test-Path .env)) { throw ".env not found: copy .env.example to .env and fill it in" }
+if (-not (Test-Path .env)) {
+    # a fresh installation: everything else is set up in the browser
+    [IO.File]::WriteAllText((Join-Path $root ".env"), "# AI DevTeam: advanced settings, see .env.example. The model and Git are set up in the browser.`n",
+                            (New-Object Text.UTF8Encoding $false))
+}
 $cfg = @{}
 foreach ($line in Get-Content .env -Encoding UTF8) {
     if ($line -match '^\s*#' -or $line -notmatch '=') { continue }
@@ -51,7 +55,10 @@ if ($bind -ne "127.0.0.1" -and -not ((Get-Cfg "UI_USER") -and (Get-Cfg "UI_PASSW
     throw "UI_BIND=$bind without UI_USER/UI_PASSWORD would let anyone on the network run commands through the agents"
 }
 
-$common = "INTERNAL_SECRET", "LLM_MODEL", "LLM_BASE_URL", "LLM_TEMPERATURE", "LLM_MAX_TOKENS", "LLM_CONTEXT_WINDOW", "LLM_TIMEOUT",
+$Build = $Build -or $Rebuild
+$IMAGE = if ($Build) { "devteam-agent:latest" } else { Get-Cfg "DEVTEAM_IMAGE" "ghcr.io/nikvladimirovich2/ai-devteam:latest" }
+
+$common = "INTERNAL_SECRET", "LLM_API_KEY", "LLM_MODEL", "LLM_BASE_URL", "LLM_TEMPERATURE", "LLM_MAX_TOKENS", "LLM_CONTEXT_WINDOW", "LLM_TIMEOUT",
           "LLM_SSL_VERIFY_DISABLE", "LLM_FUNCTION_CALLING", "AGENT_MAX_ITER", "SHELL_TIMEOUT"
 $extra = @{
     lead   = "MAX_QA_ROUNDS", "MAX_CI_ROUNDS", "GIT_PROVIDER", "GIT_URL", "UI_USER", "UI_PASSWORD"
@@ -64,12 +71,21 @@ function Invoke-Wslc { $ErrorActionPreference = "Continue"; & wslc.exe @args; if
 function Test-Wslc { $ErrorActionPreference = "Continue"; & wslc.exe @args *> $null; return $LASTEXITCODE -eq 0 }
 
 # ---------- image, network, volumes
-if ($Rebuild -or -not (Test-Wslc image inspect $IMAGE)) {
+if ($Build) {
     Write-Host "Building $IMAGE (first time ~5-10 min)..."
     Invoke-Wslc build -t $IMAGE ./agent
+} else {
+    Write-Host "Downloading $IMAGE (first time ~1.7 GB)..."
+    if (-not (Test-Wslc pull $IMAGE)) {
+        if (Test-Wslc image inspect $IMAGE) { Write-Host "No connection to the registry: using the image already downloaded." }
+        elseif (Test-Path ./agent/Dockerfile) { Write-Host "Download failed: building the image here instead."; $IMAGE = "devteam-agent:latest"; Invoke-Wslc build -t $IMAGE ./agent }
+        else { throw "Could not download $IMAGE. Check the internet connection and run the script again." }
+    }
 }
 if (-not (Test-Wslc network inspect $NET)) { Invoke-Wslc network create $NET | Out-Null }
-foreach ($v in "devteam_workspace", "devteam_leaddata") { if (-not (Test-Wslc volume inspect $v)) { Invoke-Wslc volume create $v | Out-Null } }
+foreach ($v in "devteam_workspace", "devteam_leaddata", "devteam_devopsdata") { if (-not (Test-Wslc volume inspect $v)) { Invoke-Wslc volume create $v | Out-Null } }
+$certs = (Join-Path $root (Get-Cfg "CERTS_DIR" "agent/certs")) -replace '\\', '/'
+if (-not (Test-Path $certs)) { New-Item -ItemType Directory -Force $certs | Out-Null }
 
 # ---------- containers
 $names = @($ROLES | ForEach-Object { "devteam-$_" }) + "devteam-mockllm"
@@ -92,10 +108,17 @@ foreach ($r in $ROLES) {
         $text = ($vars.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join "`n"
         [IO.File]::WriteAllText($envFile, $text + "`n", (New-Object Text.UTF8Encoding $false))   # LF, no BOM
         $runArgs = @("run", "-d", "--name", "devteam-$r", "--network", $NET, "--network-alias", $r,
-                  "-v", "devteam_workspace:/workspace", "--env-file", $envFile)
+                  "-v", "devteam_workspace:/workspace", "-v", "${certs}:/certs:ro", "--env-file", $envFile)
         if ($r -eq "lead") { $runArgs += @("-v", "devteam_leaddata:/data", "-p", "${bind}:$(Get-Cfg 'UI_PORT' '8080'):8000") }
+        if ($r -eq "devops") { $runArgs += @("-v", "devteam_devopsdata:/devops-data") }
         Invoke-Wslc @runArgs $IMAGE | Out-Null
     } finally { Remove-Item $envFile -Force -ErrorAction SilentlyContinue }
     Write-Host "started devteam-$r"
 }
-Write-Host "UI: http://localhost:$(Get-Cfg 'UI_PORT' '8080')   (logs: wslc logs -f devteam-lead)"
+$url = "http://localhost:$(Get-Cfg 'UI_PORT' '8080')"
+Write-Host "Waiting for the team..."
+for ($i = 0; $i -lt 60; $i++) {
+    try { Invoke-WebRequest -UseBasicParsing -TimeoutSec 3 "$url/health" | Out-Null; break } catch { Start-Sleep 2 }
+}
+Write-Host "Ready: $url   (logs: wslc logs -f devteam-lead)"
+if (-not $NoBrowser) { Start-Process $url }

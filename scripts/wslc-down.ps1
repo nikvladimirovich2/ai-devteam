@@ -5,6 +5,6 @@ $ErrorActionPreference = "Continue"
 foreach ($n in "lead", "architect", "backend", "frontend", "qa", "devops", "mockllm") {
     & wslc.exe remove -f "devteam-$n" *> $null
 }
-if ($Volumes) { foreach ($v in "devteam_workspace", "devteam_leaddata") { & wslc.exe volume remove $v *> $null } }
+if ($Volumes) { foreach ($v in "devteam_workspace", "devteam_leaddata", "devteam_devopsdata") { & wslc.exe volume remove $v *> $null } }
 & wslc.exe network remove devteam *> $null
 Write-Host "stopped"
