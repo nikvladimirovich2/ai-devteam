@@ -219,8 +219,11 @@ Issues and pull requests are welcome, see [CONTRIBUTING.md](CONTRIBUTING.md). Ch
 
 ## Support the project
 
-If AI DevTeam saves you time, you can support its development with the ❤ **Sponsor** button at the top of
-the repository. A star ⭐ helps too.
+If AI DevTeam saves you time, you can support its development:
+
+[![Sponsor](https://img.shields.io/badge/Sponsor-%E2%9D%A4-db61a2?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/nikvladimirovich2)
+
+A star ⭐ helps too.
 
 ## License
 

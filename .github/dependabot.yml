@@ -6,3 +6,8 @@ updates:
   - package-ecosystem: docker
     directory: /agent
     schedule: { interval: monthly }
+    ignore:
+      # requirements.lock is resolved for Python 3.12: move to a new Python by hand
+      # (change the image, regenerate the lock, run the smoke test)
+      - dependency-name: python
+        update-types: [version-update:semver-major, version-update:semver-minor]
