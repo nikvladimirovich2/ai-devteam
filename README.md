@@ -56,6 +56,7 @@ QA verdict and the link to the repository. After completion you can send a **rev
 <img src=".github/assets/setup-wizard.png" width="720" alt="Setup wizard (shown in Russian; English is one click away)">
 
 Updating: run the installer again. On Windows, after a restart: the **AI DevTeam** shortcut on the desktop.
+Stop, start, update and uninstall (keeping or deleting the data): [DEPLOY.md § 12](DEPLOY.md#12-stop-start-update-uninstall).
 Company certificates (private CA): put `*.crt` into the `certs` folder of the installation and restart.
 
 > Works best for small and medium projects (a website, a bot, an API, an internal service). Review the result

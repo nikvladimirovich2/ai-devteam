@@ -30,7 +30,7 @@
     # 2. files
     Write-Host "Installing AI DevTeam into $dir"
     foreach ($d in "scripts", "certs") { New-Item -ItemType Directory -Force (Join-Path $dir $d) | Out-Null }
-    foreach ($f in "scripts/wslc-up.ps1", "scripts/wslc-down.ps1", ".env.example") {
+    foreach ($f in "scripts/wslc-up.ps1", "scripts/wslc-down.ps1", "scripts/uninstall.ps1", ".env.example") {
         Invoke-WebRequest -UseBasicParsing "https://raw.githubusercontent.com/$repo/$ref/$f" -OutFile (Join-Path $dir $f)
     }
     $envFile = Join-Path $dir ".env"
@@ -44,19 +44,25 @@
         [IO.File]::WriteAllText($envFile, $text, (New-Object Text.UTF8Encoding $false))
     }
 
-    # 3. desktop shortcut: start the team (and open the browser) with one double click
+    # 3. desktop shortcuts: start the team (and open the browser) / stop it, with one double click
     $up = Join-Path $dir "scripts\wslc-up.ps1"
+    $down = Join-Path $dir "scripts\wslc-down.ps1"
     try {
-        $sh = (New-Object -ComObject WScript.Shell).CreateShortcut((Join-Path ([Environment]::GetFolderPath("Desktop")) "AI DevTeam.lnk"))
-        $sh.TargetPath = "powershell.exe"
-        $sh.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$up`""
-        $sh.WorkingDirectory = $dir
-        $sh.Save()
+        $ws = New-Object -ComObject WScript.Shell
+        $desktop = [Environment]::GetFolderPath("Desktop")
+        foreach ($s in @(@("AI DevTeam.lnk", $up, ""), @("AI DevTeam - stop.lnk", $down, "-NoExit "))) {
+            $sh = $ws.CreateShortcut((Join-Path $desktop $s[0]))
+            $sh.TargetPath = "powershell.exe"
+            $sh.Arguments = "$($s[2])-NoProfile -ExecutionPolicy Bypass -File `"$($s[1])`""
+            $sh.WorkingDirectory = $dir
+            $sh.Save()
+        }
     } catch { Write-Host "(no desktop shortcut: $($_.Exception.Message))" }
 
     # 4. start
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $up
     Write-Host ""
     Write-Host "Next: follow Setup in the browser (AI model key, GitHub/GitLab token)."
-    Write-Host "After a Windows restart: double-click 'AI DevTeam' on the desktop."
+    Write-Host "After a Windows restart: double-click 'AI DevTeam' on the desktop. Stop: 'AI DevTeam - stop'."
+    Write-Host "Uninstall: powershell -ExecutionPolicy Bypass -File `"$dir\scripts\uninstall.ps1`""
 }

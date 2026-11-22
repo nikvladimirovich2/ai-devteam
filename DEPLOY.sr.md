@@ -364,3 +364,51 @@ sesije se gube.**
 | Build pada na `pip install` / `apt-get` sa TLS greškama | korporativni proxy/CA: stavite CA u `agent\certs\`, ponovo izgradite sa `-Rebuild` |
 | Agenti su spori ili bivaju ubijeni tokom testova | memorija VM-a: `wslc settings` → povećajte memoriju, zatim `wslc system session terminate` |
 | Izmene u `.env` se ne primenjuju | ponovo pokrenite `wslc-up.ps1`: on ponovo kreira kontejnere |
+
+## 12. Zaustavljanje, pokretanje, ažuriranje, uklanjanje
+
+Zaustavljanje ništa ne briše: istorija zadataka, folderi projekata, ključevi i tokeni iz `⚙ Setup` ostaju.
+Briše ih samo **uklanjanje sa podacima**. Repozitorijumi već objavljeni na GitHub/GitLab se nikada ne diraju.
+
+### Windows (instalirano preko `install.ps1`)
+
+| Radnja | Kako |
+|---|---|
+| Zaustavi | dupli klik na prečicu **AI DevTeam - stop** na radnoj površini, ili `powershell -ExecutionPolicy Bypass -File "$HOME\ai-devteam\scripts\wslc-down.ps1"` |
+| Pokreni (i posle restarta Windows-a) | dupli klik na prečicu **AI DevTeam** na radnoj površini |
+| Ažuriraj na najnoviju verziju | ponovo pokreni instaler: `irm https://raw.githubusercontent.com/nikvladimirovich2/ai-devteam/main/install.ps1 \| iex` (podaci i podešavanja ostaju) |
+| Stanje, logovi | `wslc list` · `wslc logs -f devteam-lead` |
+| Ukloni, zadrži podatke | `powershell -ExecutionPolicy Bypass -File "$HOME\ai-devteam\scripts\uninstall.ps1" -KeepData` |
+| Ukloni potpuno | `powershell -ExecutionPolicy Bypass -File "$HOME\ai-devteam\scripts\uninstall.ps1"` (pita pre brisanja podataka; `-Yes` = bez pitanja) |
+
+`uninstall.ps1` uklanja kontejnere, mrežu, image (~1,7 GB), obe prečice sa radne površine i folder
+`ai-devteam`, a bez `-KeepData` i volumene `devteam_workspace`, `devteam_leaddata`, `devteam_devopsdata`. Ako
+nije ostao nijedan drugi WSL kontejner ni image, briše i disk virtuelne mašine WSL kontejnera
+(`%LOCALAPPDATA%\wslc\sessions\…\storage.vhdx`), čime se vraća preostali prostor na disku. Sam WSL ostaje instaliran.
+
+### Linux / macOS (instalirano preko `install.sh`)
+
+```bash
+cd ~/ai-devteam
+docker compose stop          # stop (data kept)
+docker compose start         # start again
+docker compose ps            # status
+docker compose logs -f lead  # logs
+curl -fsSL https://raw.githubusercontent.com/nikvladimirovich2/ai-devteam/main/install.sh | bash   # update
+curl -fsSL https://raw.githubusercontent.com/nikvladimirovich2/ai-devteam/main/install.sh | bash -s -- --uninstall              # remove everything
+curl -fsSL https://raw.githubusercontent.com/nikvladimirovich2/ai-devteam/main/install.sh | bash -s -- --uninstall --keep-data  # keep the data volumes
+```
+
+Posle restarta kontejneri se sami pokreću (`restart: unless-stopped`), osim ako ste ih zaustavili.
+
+### Instalirano iz izvornog koda
+
+```bash
+docker compose down                          # stop and remove the containers, data kept
+docker compose down -v                       # … and delete the data volumes
+docker compose down -v --rmi all             # … and the image
+docker image prune -f                        # leftovers of local builds
+```
+
+Izvorni kod na Windows-u: `.\scripts\wslc-down.ps1` (zaustavi), `.\scripts\wslc-down.ps1 -Volumes` (i podaci),
+`.\scripts\uninstall.ps1` (sve osim samog foldera).

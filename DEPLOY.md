@@ -364,3 +364,52 @@ session are lost.**
 | Build fails on `pip install` / `apt-get` with TLS errors | corporate proxy/CA: put the CA into `agent\certs\`, rebuild with `-Rebuild` |
 | Agents are slow or get killed during tests | VM memory: `wslc settings` → raise memory, then `wslc system session terminate` |
 | `.env` changes do not apply | run `wslc-up.ps1` again: it recreates the containers |
+
+## 12. Stop, start, update, uninstall
+
+Stopping keeps everything: task history, project folders, keys and tokens from ⚙ Setup. Only **uninstall
+with data** deletes them. Repositories already published to GitHub/GitLab are never touched.
+
+### Windows (installed with `install.ps1`)
+
+| Action | How |
+|---|---|
+| Stop | double-click **AI DevTeam - stop** on the desktop, or `powershell -ExecutionPolicy Bypass -File "$HOME\ai-devteam\scripts\wslc-down.ps1"` |
+| Start (also after a Windows restart) | double-click **AI DevTeam** on the desktop |
+| Update to the latest version | run the installer again: `irm https://raw.githubusercontent.com/nikvladimirovich2/ai-devteam/main/install.ps1 \| iex` (data and settings are kept) |
+| Status, logs | `wslc list` · `wslc logs -f devteam-lead` |
+| Uninstall, keep the data | `powershell -ExecutionPolicy Bypass -File "$HOME\ai-devteam\scripts\uninstall.ps1" -KeepData` |
+| Uninstall completely | `powershell -ExecutionPolicy Bypass -File "$HOME\ai-devteam\scripts\uninstall.ps1"` (asks before deleting the data; `-Yes` = no questions) |
+
+`uninstall.ps1` removes the containers, the network, the image (~1.7 GB), both desktop shortcuts and the
+`ai-devteam` folder, and — unless `-KeepData` — the volumes `devteam_workspace`, `devteam_leaddata`,
+`devteam_devopsdata`. When no other WSL containers or images are left, it also deletes the disk of the WSL
+container VM (`%LOCALAPPDATA%\wslc\sessions\…\storage.vhdx`), which gives the remaining disk space back.
+WSL itself stays installed.
+
+### Linux / macOS (installed with `install.sh`)
+
+```bash
+cd ~/ai-devteam
+docker compose stop          # stop (data kept)
+docker compose start         # start again
+docker compose ps            # status
+docker compose logs -f lead  # logs
+curl -fsSL https://raw.githubusercontent.com/nikvladimirovich2/ai-devteam/main/install.sh | bash   # update
+curl -fsSL https://raw.githubusercontent.com/nikvladimirovich2/ai-devteam/main/install.sh | bash -s -- --uninstall              # remove everything
+curl -fsSL https://raw.githubusercontent.com/nikvladimirovich2/ai-devteam/main/install.sh | bash -s -- --uninstall --keep-data  # keep the data volumes
+```
+
+The containers restart by themselves after a reboot (`restart: unless-stopped`) unless you stopped them.
+
+### Installed from the source code
+
+```bash
+docker compose down                          # stop and remove the containers, data kept
+docker compose down -v                       # … and delete the data volumes
+docker compose down -v --rmi all             # … and the image
+docker image prune -f                        # leftovers of local builds
+```
+
+Windows source checkout: `.\scripts\wslc-down.ps1` (stop), `.\scripts\wslc-down.ps1 -Volumes` (and the data),
+`.\scripts\uninstall.ps1` (everything except the folder itself).

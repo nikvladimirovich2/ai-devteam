@@ -2,6 +2,14 @@
 
 Format: [Keep a Changelog](https://keepachangelog.com/), versions: [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- Stop / start / update / uninstall guide (DEPLOY.md § 12, all languages); `scripts/uninstall.ps1` for Windows
+  (keeps or deletes the data, gives the WSL container disk back), an «AI DevTeam - stop» desktop shortcut;
+  `install.sh --uninstall [--keep-data]` for Linux/macOS.
+- CI tests `install.sh` end to end: install, stop/start, uninstall.
+
 ## [0.2.1] - 2026-11-22
 
 ### Added

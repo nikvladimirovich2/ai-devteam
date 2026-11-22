@@ -364,3 +364,51 @@ wslc image prune -a -f
 | Сборка падает на `pip install` / `apt-get` с ошибками TLS | корпоративный прокси/CA: положите CA в `agent\certs\`, пересоберите с `-Rebuild` |
 | Агенты работают медленно или убиваются во время тестов | память VM: `wslc settings` → увеличьте память, затем `wslc system session terminate` |
 | Изменения в `.env` не применяются | снова запустите `wslc-up.ps1`: он пересоздаёт контейнеры |
+
+## 12. Остановка, запуск, обновление, удаление
+
+Остановка ничего не удаляет: история задач, папки проектов, ключи и токены из «⚙ Настройка» сохраняются.
+Удаляет их только **удаление с данными**. Репозитории, уже опубликованные в GitHub/GitLab, не затрагиваются никогда.
+
+### Windows (установка через `install.ps1`)
+
+| Действие | Как |
+|---|---|
+| Остановить | двойной щелчок по ярлыку **AI DevTeam - stop** на рабочем столе или `powershell -ExecutionPolicy Bypass -File "$HOME\ai-devteam\scripts\wslc-down.ps1"` |
+| Запустить (в том числе после перезагрузки Windows) | двойной щелчок по ярлыку **AI DevTeam** на рабочем столе |
+| Обновить до последней версии | запустить установщик ещё раз: `irm https://raw.githubusercontent.com/nikvladimirovich2/ai-devteam/main/install.ps1 \| iex` (данные и настройки сохраняются) |
+| Состояние, логи | `wslc list` · `wslc logs -f devteam-lead` |
+| Удалить, сохранив данные | `powershell -ExecutionPolicy Bypass -File "$HOME\ai-devteam\scripts\uninstall.ps1" -KeepData` |
+| Удалить полностью | `powershell -ExecutionPolicy Bypass -File "$HOME\ai-devteam\scripts\uninstall.ps1"` (перед удалением данных спросит подтверждение; `-Yes` — без вопросов) |
+
+`uninstall.ps1` удаляет контейнеры, сеть, образ (~1,7 ГБ), оба ярлыка на рабочем столе и папку `ai-devteam`,
+а без `-KeepData` — ещё и тома `devteam_workspace`, `devteam_leaddata`, `devteam_devopsdata`. Если других
+контейнеров и образов WSL не осталось, удаляется и диск виртуальной машины контейнеров WSL
+(`%LOCALAPPDATA%\wslc\sessions\…\storage.vhdx`) — так освобождается оставшееся место. Сам WSL остаётся установленным.
+
+### Linux / macOS (установка через `install.sh`)
+
+```bash
+cd ~/ai-devteam
+docker compose stop          # stop (data kept)
+docker compose start         # start again
+docker compose ps            # status
+docker compose logs -f lead  # logs
+curl -fsSL https://raw.githubusercontent.com/nikvladimirovich2/ai-devteam/main/install.sh | bash   # update
+curl -fsSL https://raw.githubusercontent.com/nikvladimirovich2/ai-devteam/main/install.sh | bash -s -- --uninstall              # remove everything
+curl -fsSL https://raw.githubusercontent.com/nikvladimirovich2/ai-devteam/main/install.sh | bash -s -- --uninstall --keep-data  # keep the data volumes
+```
+
+После перезагрузки контейнеры запускаются сами (`restart: unless-stopped`), если вы их не остановили.
+
+### Установка из исходного кода
+
+```bash
+docker compose down                          # stop and remove the containers, data kept
+docker compose down -v                       # … and delete the data volumes
+docker compose down -v --rmi all             # … and the image
+docker image prune -f                        # leftovers of local builds
+```
+
+Исходный код на Windows: `.\scripts\wslc-down.ps1` (остановить), `.\scripts\wslc-down.ps1 -Volumes` (и данные),
+`.\scripts\uninstall.ps1` (всё, кроме самой папки).

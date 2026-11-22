@@ -4,6 +4,7 @@
 # It downloads the prebuilt image, starts the team and opens http://localhost:<port>.
 # The AI model and GitHub/GitLab are then set up in the browser. Run it again to update.
 # Options (environment): DEVTEAM_DIR (default ~/ai-devteam), DEVTEAM_REF (branch or tag), UI_PORT.
+# Uninstall: curl -fsSL .../install.sh | bash -s -- --uninstall     (--keep-data keeps history and projects)
 set -euo pipefail
 REPO=nikvladimirovich2/ai-devteam
 REF=${DEVTEAM_REF:-main}
@@ -17,6 +18,21 @@ command -v docker >/dev/null 2>&1 || die "Docker is not installed.
 docker info >/dev/null 2>&1 || die "Docker is installed but not running, or this user may not use it.
   Linux: sudo usermod -aG docker \$USER  (then log out and in).  macOS: start Docker Desktop."
 docker compose version >/dev/null 2>&1 || die "Docker Compose v2 is missing (Linux package: docker-compose-plugin)."
+
+if [ "${1:-}" = "--uninstall" ]; then
+  [ -f "$DIR/docker-compose.yml" ] || die "No installation in $DIR (set DEVTEAM_DIR if it is elsewhere)."
+  cd "$DIR"
+  if [ "${2:-}" = "--keep-data" ]; then
+    docker compose down --rmi all --remove-orphans
+    say "Removed the containers and the image; the data volumes are kept (docker volume ls | grep devteam)."
+  else
+    docker compose down -v --rmi all --remove-orphans
+    say "Removed the containers, the image and the data (task history, projects, saved keys/tokens)."
+  fi
+  cd "$HOME" && rm -rf "$DIR"
+  say "Folder $DIR deleted. Repositories in GitHub/GitLab were not touched."
+  exit 0
+fi
 
 say "Installing AI DevTeam into $DIR"
 mkdir -p "$DIR/certs"
@@ -46,6 +62,7 @@ curl -fs "$url/health" >/dev/null 2>&1 || die "The team did not start. Logs: cd 
 say "Ready: $url"
 echo "  Open it, then follow ⚙ Setup: the AI model key and a GitHub/GitLab token."
 echo "  Company CA certificates (*.crt): put them into $DIR/certs and run: docker compose restart"
-echo "  Stop: cd $DIR && docker compose down      Update: run this installer again"
+echo "  Stop: cd $DIR && docker compose stop     Start: docker compose start     Update: run this installer again"
+echo "  Uninstall: curl -fsSL https://raw.githubusercontent.com/$REPO/main/install.sh | bash -s -- --uninstall"
 if command -v xdg-open >/dev/null 2>&1; then xdg-open "$url" >/dev/null 2>&1 || true
 elif command -v open >/dev/null 2>&1; then open "$url" || true; fi

@@ -32,3 +32,26 @@ jobs:
       - uses: actions/checkout@v7
       - name: End-to-end smoke test (mock LLM)
         run: bash tests/smoke.sh
+
+  installer-linux:
+    # install.sh exactly as a user runs it (prebuilt image from ghcr.io), then --uninstall
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install
+        run: DEVTEAM_REF=${{ github.sha }} DEVTEAM_DIR=$RUNNER_TEMP/ai-devteam bash install.sh
+      - name: Team is up
+        run: |
+          port=$(grep '^UI_PORT=' $RUNNER_TEMP/ai-devteam/.env | cut -d= -f2)
+          curl -fs "http://127.0.0.1:$port/api/team" | python3 -c 'import json,sys; t=json.load(sys.stdin); assert all(v["ok"] for v in t.values()), t; print("6 agents ok")'
+      - name: Stop and start
+        run: cd $RUNNER_TEMP/ai-devteam && docker compose stop && docker compose start && sleep 5 && docker compose ps
+      - name: Uninstall
+        run: |
+          DEVTEAM_REF=${{ github.sha }} DEVTEAM_DIR=$RUNNER_TEMP/ai-devteam bash install.sh --uninstall
+          test ! -d $RUNNER_TEMP/ai-devteam
+          test -z "$(docker ps -aq --filter name=devteam-)"
+          test -z "$(docker volume ls -q | grep -E 'devteam|ai-devteam' || true)"
+          test -z "$(docker images -q ghcr.io/nikvladimirovich2/ai-devteam)"
+          echo "uninstalled cleanly"

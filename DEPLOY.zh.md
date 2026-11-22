@@ -364,3 +364,51 @@ wslc image prune -a -f
 | 构建在 `pip install` / `apt-get` 时因 TLS 错误失败 | 企业代理/CA：将 CA 放入 `agent\certs\`，使用 `-Rebuild` 重新构建 |
 | 智能体运行缓慢或在测试期间被终止 | 虚拟机内存：`wslc settings` → 增加内存，然后执行 `wslc system session terminate` |
 | `.env` 的修改未生效 | 再次运行 `wslc-up.ps1`：它会重新创建容器 |
+
+## 12. 停止、启动、更新、卸载
+
+停止不会删除任何内容：任务历史、项目文件夹以及在 `⚙ Setup`（设置向导）中保存的密钥和令牌都会保留。
+只有**连同数据一起卸载**才会删除它们。已经发布到 GitHub/GitLab 的仓库永远不会被改动。
+
+### Windows（通过 `install.ps1` 安装）
+
+| 操作 | 方法 |
+|---|---|
+| 停止 | 双击桌面上的 **AI DevTeam - stop** 快捷方式，或运行 `powershell -ExecutionPolicy Bypass -File "$HOME\ai-devteam\scripts\wslc-down.ps1"` |
+| 启动（包括 Windows 重启之后） | 双击桌面上的 **AI DevTeam** 快捷方式 |
+| 更新到最新版本 | 再次运行安装程序：`irm https://raw.githubusercontent.com/nikvladimirovich2/ai-devteam/main/install.ps1 \| iex`（数据和设置会保留） |
+| 状态、日志 | `wslc list` · `wslc logs -f devteam-lead` |
+| 卸载但保留数据 | `powershell -ExecutionPolicy Bypass -File "$HOME\ai-devteam\scripts\uninstall.ps1" -KeepData` |
+| 完全卸载 | `powershell -ExecutionPolicy Bypass -File "$HOME\ai-devteam\scripts\uninstall.ps1"`（删除数据前会询问确认；`-Yes` 表示不询问） |
+
+`uninstall.ps1` 会删除容器、网络、镜像（约 1.7 GB）、桌面上的两个快捷方式以及 `ai-devteam` 文件夹；
+如果没有指定 `-KeepData`，还会删除卷 `devteam_workspace`、`devteam_leaddata`、`devteam_devopsdata`。
+如果系统中已没有其他 WSL 容器或镜像，还会删除 WSL 容器虚拟机的磁盘
+（`%LOCALAPPDATA%\wslc\sessions\…\storage.vhdx`），从而释放剩余的磁盘空间。WSL 本身仍保持安装。
+
+### Linux / macOS（通过 `install.sh` 安装）
+
+```bash
+cd ~/ai-devteam
+docker compose stop          # stop (data kept)
+docker compose start         # start again
+docker compose ps            # status
+docker compose logs -f lead  # logs
+curl -fsSL https://raw.githubusercontent.com/nikvladimirovich2/ai-devteam/main/install.sh | bash   # update
+curl -fsSL https://raw.githubusercontent.com/nikvladimirovich2/ai-devteam/main/install.sh | bash -s -- --uninstall              # remove everything
+curl -fsSL https://raw.githubusercontent.com/nikvladimirovich2/ai-devteam/main/install.sh | bash -s -- --uninstall --keep-data  # keep the data volumes
+```
+
+重启后容器会自动启动（`restart: unless-stopped`），除非您之前手动停止了它们。
+
+### 从源代码安装
+
+```bash
+docker compose down                          # stop and remove the containers, data kept
+docker compose down -v                       # … and delete the data volumes
+docker compose down -v --rmi all             # … and the image
+docker image prune -f                        # leftovers of local builds
+```
+
+Windows 上的源代码检出：`.\scripts\wslc-down.ps1`（停止），`.\scripts\wslc-down.ps1 -Volumes`（连同数据），
+`.\scripts\uninstall.ps1`（删除除文件夹本身以外的全部内容）。
