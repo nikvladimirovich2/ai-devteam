@@ -1,5 +1,15 @@
 # AI DevTeam
 
+[![CI](https://github.com/nikvladimirovich2/ai-devteam/actions/workflows/ci.yml/badge.svg)](https://github.com/nikvladimirovich2/ai-devteam/actions/workflows/ci.yml)
+[![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
+
+**A self-hosted AI development team that turns a task into a tested project in your own GitLab or GitHub,
+using your own model.** Built for closed environments: vLLM / Ollama / GigaChat, private CA
+certificates, corporate GitLab, no data leaves your network except the calls to your model.
+
+> ⚠️ The agents run shell commands written by a language model. Deploy it on a dedicated host and read
+> [SECURITY.md](SECURITY.md) first.
+
 A team of 6 AI agents built on [CrewAI](https://github.com/crewAIInc/crewAI). Each agent runs in its own Docker container
 under its own API key to the corporate LLM. You give the Team Lead a task in the web interface and get back a finished
 project pushed to the corporate **GitLab or GitHub** (chosen by the URL in `GIT_URL`).
@@ -118,7 +128,7 @@ GitHub needs `Actions: Read` (fine-grained) in addition to Contents/Administrati
 ### Values containing `$` in `.env`
 
 Docker Compose expands `$VAR` in `.env`. If a key/token contains `$`, wrap the value in **single quotes**:
-`QA_API_KEY=#def`. Otherwise part of the key is lost (the warning `The "X" variable is not set` gives it away).
+`QA_API_KEY='$abc#def'`. Otherwise part of the key is lost (the warning `The "X" variable is not set` gives it away).
 
 ## Example task
 
@@ -149,10 +159,13 @@ on /r/{code} and does not count a click. Add tests.»*
 ## Security
 
 - Each container receives **only its own** API key; `GIT_TOKEN` exists only in `devops`.
-- Commands that agents run in the shell are launched with an environment cleared of `*API_KEY*`/`*TOKEN*`/`*PASSWORD*`.
-- The token is passed to git only via an HTTP header for the duration of the push — it is not stored in `.git/config` or in the logs.
-- Agents work as uid 1000 without privileges and without access to the Docker socket.
-- `.env` is in `.gitignore`.
+- Commands that agents run in the shell are executed as a separate user `runner` with an environment cleared of
+  `*API_KEY*`/`*TOKEN*`/`*PASSWORD*`/`*SECRET*`: they cannot read the agent's environment or memory via `/proc`.
+- The token is passed to git through the environment for the duration of the push — not on the command line,
+  not in `.git/config`, not in the logs.
+- Internal requests between the containers are signed (`INTERNAL_SECRET`); unsigned calls get `403`.
+- Agents work without root and without access to the Docker socket. `.env` is in `.gitignore`.
+- Details, limits and how to report a vulnerability: [SECURITY.md](SECURITY.md).
 
 ## Data
 
@@ -167,7 +180,11 @@ docker compose down -v                   # stop and delete data
 
 ## Smoke test without a real model
 
-`tests/` contains a mock OpenAI-compatible LLM and a temporary GitLab CE — it checks the whole pipeline down to the push:
+```bash
+bash tests/smoke.sh     # mock LLM, one task through all roles + isolation checks (the same as CI)
+```
+
+`tests/` also contains a temporary GitLab CE (~4 GB RAM) to check the whole pipeline down to the push:
 
 ```bash
 docker compose build
@@ -189,8 +206,24 @@ agent/app/common.py      LLM factory (per-role key), tools: files/shell, events
 agent/app/repo_tool.py   creating a repository and pushing (GitLab API v4 / GitHub API v3)
 agent/app/roles.py       role descriptions (prompts)
 agent/app/static/        web interface
-tests/                   mock LLM + test GitLab
+tests/                   mock LLM, smoke test, test GitLab
+scripts/wslc-*.ps1       start/stop on Windows (WSL containers)
 scripts/check.sh         pre-flight check of a deployment
 DEPLOY.md                deployment guide
 MODELS.md                which model for which role
 ```
+
+## Contributing
+
+Issues and pull requests are welcome, see [CONTRIBUTING.md](CONTRIBUTING.md). Changes: [CHANGELOG.md](CHANGELOG.md).
+
+## Support the project
+
+If AI DevTeam saves you time, you can support its development with the ❤ **Sponsor** button at the top of
+the repository. A star ⭐ helps too.
+
+## License
+
+[GNU AGPL-3.0](LICENSE). You may use, change and share it, including commercially. If you run a changed
+version as a network service, you must make your changes available to its users under the same license.
+
