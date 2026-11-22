@@ -1,0 +1,9 @@
+# CI smoke test: the mock LLM only (no Git host). Used by tests/smoke.sh.
+services:
+  mockllm:
+    image: devteam-agent:latest
+    container_name: devteam-mockllm
+    command: ["python", "-m", "uvicorn", "mock_llm:app", "--host", "0.0.0.0", "--port", "9000", "--app-dir", "/tests"]
+    volumes: ["./tests:/tests:ro"]
+    networks: [team]
+    healthcheck: { test: ["CMD", "curl", "-fs", "http://localhost:9000/v1/models"], interval: 5s }

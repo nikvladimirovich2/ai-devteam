@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  static:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Python syntax
+        run: python -m compileall -q agent/app tests
+      - name: Shell syntax
+        run: for f in scripts/*.sh tests/*.sh; do bash -n "$f"; done
+      - name: Compose files
+        run: INTERNAL_SECRET=ci docker compose -f docker-compose.yml -f tests/docker-compose.ci.yml config -q
+
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - name: End-to-end smoke test (mock LLM)
+        run: bash tests/smoke.sh
