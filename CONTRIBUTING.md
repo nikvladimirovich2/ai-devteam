@@ -15,7 +15,16 @@ bash tests/smoke.sh            # builds the image and runs a task with the mock 
 pipeline (plan → roles → QA → DevOps) and the agent isolation are tested without a GPU or API key.
 On Windows see DEPLOY.md § 11 (`scripts/wslc-up.ps1 -Mock`).
 
-For a real run, fill `.env` (see `.env.example`) and `docker compose up -d --build`.
+For a real run from the source tree:
+```bash
+echo "INTERNAL_SECRET=$(openssl rand -hex 32)" > .env
+docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+```
+then open http://localhost:8080 and finish ⚙ Setup (or put the model and Git into `.env`).
+`docker-compose.yml` alone uses the prebuilt image `ghcr.io/nikvladimirovich2/ai-devteam`
+(published by `.github/workflows/image.yml` from `main` and from `v*` tags).
+
+Unit tests of the setup helpers: `pip install httpx pytest && python -m pytest -q tests`.
 
 ## Dependencies
 Direct dependencies are in `agent/requirements.in`; the image installs the pinned `agent/requirements.lock`.

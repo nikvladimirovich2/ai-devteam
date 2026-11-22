@@ -1,6 +1,11 @@
 # Deployment guide
 
-Step-by-step installation of AI DevTeam on a clean host. Takes ~15 minutes plus image build time (~5 min).
+Step-by-step installation of AI DevTeam on a clean host. Takes ~15 minutes.
+
+**The quick way** is the one-command installer from the [README](README.md#quick-start): it downloads the
+prebuilt image (`ghcr.io/nikvladimirovich2/ai-devteam`), starts the team and opens the browser, where the
+setup wizard (⚙ Setup) asks for the model key and the GitHub/GitLab token. This guide is for servers,
+closed networks and everything that can be configured in `.env` instead.
 
 **Windows?** Run it with the WSL container CLI (`wslc`), no Docker Desktop needed: see
 [11. Windows: WSL containers (wslc)](#11-windows-wsl-containers-wslc).
@@ -45,16 +50,23 @@ cd /opt/devteam
 ```bash
 cp .env.example .env
 chmod 600 .env
+echo "INTERNAL_SECRET=$(openssl rand -hex 32)" >> .env
 $EDITOR .env
 ```
 
-Required:
+Only `INTERNAL_SECRET` is required. The model, the key and Git can be set **either** here **or** in the
+browser (⚙ Setup → *Check and save*). Values in `.env` win; the wizard shows them as «set in .env».
+Wizard settings are stored in the volumes: model and key in `leaddata` (lead), the Git token in
+`devopsdata` (devops only, mode 0600, not readable by the agents' shell user).
+
+Configuring in `.env`:
 
 | Variable | Example | Notes |
 |---|---|---|
 | `LLM_MODEL` | `hosted_vllm/Qwen/Qwen3-32B-AWQ` | LiteLLM format `<provider>/<model id from /v1/models>` |
 | `LLM_BASE_URL` | `https://llm.corp.local/v1` | for vLLM/OpenAI-compatible APIs — including `/v1` |
-| `LEAD_API_KEY` … `DEVOPS_API_KEY` | | 6 personal keys, one per role |
+| `LLM_API_KEY` | | one key for the whole team… |
+| `LEAD_API_KEY` … `DEVOPS_API_KEY` | | …or 6 personal keys, one per role (win over `LLM_API_KEY`) |
 | `GIT_URL` | `https://gitlab.corp.local` or `https://github.com` | provider is detected from the URL |
 | `GIT_TOKEN` | | see «Git tokens» below |
 | `GIT_NAMESPACE` | `ai-team` | GitLab group (required) / GitHub org (empty = personal account) |
@@ -110,9 +122,13 @@ If the LLM or GitLab is served over HTTPS with a private CA:
 
 ```bash
 cp /path/to/ca-or-server.crt agent/certs/       # PEM, -----BEGIN CERTIFICATE-----
+docker compose restart
 ```
 
-It is baked into the image (system store + certifi + `REQUESTS_CA_BUNDLE`/`SSL_CERT_FILE`/`NODE_EXTRA_CA_CERTS`).
+The folder (`CERTS_DIR`, default `./agent/certs`; the installers use `./certs`) is mounted at `/certs` in every
+container; at start the certificates are added to the trusted bundle for Python (certifi,
+`REQUESTS_CA_BUNDLE`/`SSL_CERT_FILE`), git (`GIT_SSL_CAINFO`) and node (`NODE_EXTRA_CA_CERTS`). No rebuild needed.
+When you build the image yourself, certificates in `agent/certs/` are also baked into it.
 The certificate SAN must contain the host from `LLM_BASE_URL` (for an IP — `IP Address:`).
 `agent/certs/*.crt` is git-ignored: copy it on every host.
 
@@ -136,10 +152,15 @@ curl -s --cacert agent/certs/llm.crt "$LLM_BASE_URL/models" -H "Authorization: B
 ## 6. Start
 
 ```bash
-docker compose up -d --build
+docker compose up -d         # pulls the prebuilt image
 docker compose ps            # 6 containers, all (healthy) after ~30 s
 ./scripts/check.sh           # end-to-end pre-flight check
 ```
+
+No access to ghcr.io (closed network)? Build the image on the host instead:
+`docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build`,
+or load it from a file: `docker save ghcr.io/nikvladimirovich2/ai-devteam:latest | gzip > devteam.tgz` on a machine
+with internet access, then `docker load < devteam.tgz`.
 
 `scripts/check.sh` verifies: `.env` filled and `$`-quoting, certificates, container health,
 **each role reaches the LLM with its own key**, native tool calling works, Git token/namespace,
@@ -169,7 +190,7 @@ Send something small first (see the README «Example task»). In the feed you sh
 ```bash
 docker compose logs -f lead devops         # logs
 docker compose restart                     # after editing .env (or: up -d to recreate)
-git pull && docker compose up -d --build   # update
+docker compose pull && docker compose up -d   # update (source builds: git pull + the build file)
 docker compose down                        # stop, data kept
 docker compose down -v                     # stop and DELETE task history and workspaces
 ```
@@ -186,7 +207,8 @@ docker run --rm -v devteam_workspace:/d -v $PWD:/b alpine tar czf /b/workspace.t
 | Symptom | Cause / fix |
 |---|---|
 | `The "X" variable is not set` on `docker compose` | a value in `.env` contains `$` — wrap it in single quotes |
-| `CERTIFICATE_VERIFY_FAILED` | put the CA/server certificate into `agent/certs/`, `docker compose build && up -d` |
+| `CERTIFICATE_VERIFY_FAILED` | put the CA/server certificate into the certs folder (`CERTS_DIR`), `docker compose restart` |
+| The wizard says «The key was rejected» / «does not call tools» | the message tells what to do; the technical detail is under it |
 | `401` from the LLM | wrong `<ROLE>_API_KEY`; `./scripts/check.sh` shows which role |
 | Agent «reported» work but `🔎 … did not create files` | model does not return tool calls → vLLM flags above, `LLM_FUNCTION_CALLING=auto` |
 | `Action 'write_file' don't exist` / loops | weak tool-calling model for this role → use a stronger one (MODELS.md) |
@@ -234,45 +256,54 @@ wslc version
 wslc run --rm hello-world           # smoke test of the container runtime
 ```
 
-### 11.3 Get the code and configure
+### 11.3 Install (one command)
+
+In PowerShell (no administrator rights needed once WSL is installed):
 
 ```powershell
-cd $HOME
-git clone https://github.com/<you>/ai-devteam.git
-cd ai-devteam
-copy .env.example .env
-notepad .env
+irm https://raw.githubusercontent.com/nikvladimirovich2/ai-devteam/main/install.ps1 | iex
 ```
 
-Fill in `.env` as described in [4. Configure `.env`](#4-configure-env). Windows specifics:
+The installer:
+- runs `wsl --update` if `wslc` is missing (and says what to do if WSL is not installed at all);
+- puts the start/stop scripts into `%USERPROFILE%\ai-devteam`, picks a free port (8080, 8081, …) for `.env`;
+- downloads the prebuilt image (~1.7 GB) and starts the six containers;
+- opens the browser on the setup wizard and creates the **AI DevTeam** desktop shortcut (start after a restart).
+
+Company certificates: `%USERPROFILE%\ai-devteam\certs\*.crt`, then start again with the shortcut.
+
+### 11.4 From the source code (developers)
+
+```powershell
+git clone https://github.com/nikvladimirovich2/ai-devteam.git
+cd ai-devteam
+powershell -ExecutionPolicy Bypass -File .\scripts\wslc-up.ps1 -Build   # builds the image here (~8 min)
+```
+
+Windows specifics of `.env` (optional, see [4. Configure `.env`](#4-configure-env)):
 
 - `INTERNAL_SECRET` may stay empty: the start script generates it and writes it into `.env`.
 - Values are read literally by the script, so `$` in keys needs no quoting (quotes are still accepted).
 - Port 8080 is often busy on a developer machine: set e.g. `UI_PORT=8099`.
   `netstat -ano | findstr :8099` shows whether the port is free.
-- Corporate certificates go to `agent\certs\*.crt`, as on Linux.
+- Corporate certificates go to `agent\certs\*.crt` (or `CERTS_DIR`).
 - Do not commit `.env`. It is in `.gitignore`. To restrict it to your user: `icacls .env /inheritance:r /grant:r "$($env:USERNAME):F"`.
 - Git with `core.autocrlf=true` (the Git for Windows default) checks the files out with CRLF.
   This was tested: the image builds and runs. The script writes the per-role env files with LF itself.
 
-### 11.4 Start
-
 wslc has no `compose` yet, so `scripts\wslc-up.ps1` does what `docker-compose.yml` does: one network
-`devteam`, volumes `devteam_workspace` and `devteam_leaddata`, six containers. Each container gets
-**only its own** key; `GIT_TOKEN` only `devteam-devops`. The temporary env files are deleted right after
-each start. The script refuses `UI_BIND` other than `127.0.0.1` without `UI_USER`/`UI_PASSWORD`.
+`devteam`, volumes `devteam_workspace`, `devteam_leaddata` and `devteam_devopsdata`, six containers. Each
+container gets **only its own** key; the Git token only `devteam-devops`. The temporary env files are
+deleted right after each start. The script refuses `UI_BIND` other than `127.0.0.1` without `UI_USER`/`UI_PASSWORD`.
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\wslc-up.ps1          # first run builds the image (~8 min)
 wslc list                                                              # 6 containers, (healthy) after ~30 s
 ```
-
-Open http://localhost:8099 (your `UI_PORT`).
 
 Smoke test without a model (uses `tests/mock_llm.py`; publishing fails without a Git host, which is expected):
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\wslc-up.ps1 -Mock
+powershell -ExecutionPolicy Bypass -File .\scripts\wslc-up.ps1 -Build -Mock
 ```
 
 Send a small task in the UI: the feed shows architect → backend/frontend → QA (pytest) → DevOps,
@@ -282,7 +313,7 @@ Security check (the same as in `check.sh`):
 
 ```powershell
 wslc exec -u runner devteam-devops sh -c "cat /proc/1/environ > /dev/null && echo LEAK || echo ok"   # ok
-wslc exec -u runner devteam-backend curl -s -o NUL -w "%{http_code}" -X POST http://devops:8000/publish -d "{}"   # 403
+wslc exec -u runner devteam-backend curl -s -o /dev/null -w "%{http_code}" -X POST http://devops:8000/publish -d "{}"   # 403
 ```
 
 `scripts/check.sh` itself calls `docker` and does not work with wslc.
@@ -293,7 +324,7 @@ wslc exec -u runner devteam-backend curl -s -o NUL -w "%{http_code}" -X POST htt
 wslc logs -f devteam-lead                                   # logs (any devteam-<role>)
 wslc stats                                                  # CPU / memory per container
 .\scripts\wslc-up.ps1                                       # after editing .env: recreates the containers
-git pull; .\scripts\wslc-up.ps1 -Rebuild                    # update
+.\scripts\wslc-up.ps1                                       # update: downloads the latest image (source: git pull; -Build)
 .\scripts\wslc-down.ps1                                     # stop, task history and projects kept
 .\scripts\wslc-down.ps1 -Volumes                            # stop and DELETE history and projects
 wslc settings                                               # VM CPU / memory / storage location
@@ -301,7 +332,7 @@ wslc settings                                               # VM CPU / memory / 
 
 Differences from Docker Compose:
 
-- **No restart policy.** After a Windows restart run `wslc-up.ps1` again. Volumes survive.
+- **No restart policy.** After a Windows restart run `wslc-up.ps1` again (the installer's desktop shortcut does that). Volumes survive.
   For autostart: Task Scheduler → «At log on» → `powershell -ExecutionPolicy Bypass -File <path>\scripts\wslc-up.ps1`.
 - The test GitLab from `tests/docker-compose.test.yml` is not started by the script (needs ~4 GB RAM).
 - Backup: `wslc run --rm -v devteam_leaddata:/d -v ${PWD}:/b alpine tar czf /b/leaddata.tgz -C /d .`

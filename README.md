@@ -2,6 +2,8 @@
 
 [![CI](https://github.com/nikvladimirovich2/ai-devteam/actions/workflows/ci.yml/badge.svg)](https://github.com/nikvladimirovich2/ai-devteam/actions/workflows/ci.yml)
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
+[![Sponsor](https://img.shields.io/badge/sponsor-%E2%9D%A4-db61a2?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/nikvladimirovich2)
+[![USDT TRC20](https://img.shields.io/badge/donate-USDT%20TRC20-26a17b?logo=tether&logoColor=white)](#support-the-author)
 
 **A self-hosted AI development team that turns a task into a tested project in your own GitLab or GitHub,
 using your own model.** Built for closed environments: vLLM / Ollama / GigaChat, private CA
@@ -35,28 +37,52 @@ QA verdict and the link to the repository. After completion you can send a **rev
 
 ## Quick start
 
-Full step-by-step guide: **[DEPLOY.md](DEPLOY.md)**. Model choice per role: **[MODELS.md](MODELS.md)**.
+**1. Install** (downloads the ready image, starts the team, opens the browser):
+
+| System | Command | Needs |
+|---|---|---|
+| Windows 10/11 | in PowerShell: `irm https://raw.githubusercontent.com/nikvladimirovich2/ai-devteam/main/install.ps1 \| iex` | WSL 3.0.1+ (the installer updates it) |
+| Linux / macOS | `curl -fsSL https://raw.githubusercontent.com/nikvladimirovich2/ai-devteam/main/install.sh \| bash` | Docker with Compose v2 |
+
+**2. Set up in the browser** (⚙ Setup opens by itself the first time):
+1. **AI model:** pick the provider (OpenAI, Anthropic, Gemini, OpenRouter, DeepSeek, Ollama, vLLM…), paste the key,
+   choose a model, **Check and save**. The check makes sure the model can call tools.
+2. **Where to publish:** GitHub or GitLab, a token (the link opens the token page with the right boxes ticked), **Check and save**.
+3. **Password** for the interface (optional on your own computer).
+
+**3. Give a task** and wait for the report with the link to the repository.
+
+Updating: run the installer again. On Windows, after a restart: the **AI DevTeam** shortcut on the desktop.
+Company certificates (private CA): put `*.crt` into the `certs` folder of the installation and restart.
+
+> Works best for small and medium projects (a website, a bot, an API, an internal service). Review the result
+> before using it in production.
+
+Manual installation, servers, all settings: **[DEPLOY.md](DEPLOY.md)**. Model choice per role: **[MODELS.md](MODELS.md)**.
+
+<details><summary>From the source code (developers, closed networks)</summary>
 
 ```bash
-git clone https://github.com/<you>/ai-devteam.git /opt/devteam && cd /opt/devteam
+git clone https://github.com/nikvladimirovich2/ai-devteam.git /opt/devteam && cd /opt/devteam
 cp .env.example .env && chmod 600 .env
 echo "INTERNAL_SECRET=$(openssl rand -hex 32)" >> .env   # signs requests between the containers
-$EDITOR .env                       # model, 6 keys, GIT_URL/GIT_TOKEN/GIT_NAMESPACE
 cp /path/to/ca.crt agent/certs/    # only if the LLM/GitLab uses a private CA
-docker compose up -d --build
-./scripts/check.sh                 # pre-flight: keys, tool calling, Git token, UI
+docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+./scripts/check.sh                 # pre-flight check
 ```
 
-**Windows:** `wslc` (WSL containers, no Docker Desktop), `.\scripts\wslc-up.ps1`. See [DEPLOY.md § 11](DEPLOY.md#11-windows-wsl-containers-wslc).
+The model and Git can be set in `.env` instead of the browser (values in `.env` win), see below.
+**Windows:** `.\scripts\wslc-up.ps1 -Build`, see [DEPLOY.md § 11](DEPLOY.md#11-windows-wsl-containers-wslc).
+</details>
 
-The UI listens on `127.0.0.1:8080` (`UI_BIND`/`UI_PORT`). Open it through an SSH tunnel:
+The UI listens on `127.0.0.1:8080` (`UI_BIND`/`UI_PORT`). On a server, open it through an SSH tunnel:
 
 ```bash
 ssh -L 8080:localhost:8080 user@<host>          # add -J user@jump:port if needed
 # → http://localhost:8080
 ```
 
-To publish directly (`UI_BIND=0.0.0.0`), be sure to set `UI_USER`/`UI_PASSWORD`.
+To publish directly (`UI_BIND=0.0.0.0`), set a password (⚙ Setup, or `UI_USER`/`UI_PASSWORD`) and use TLS.
 
 ### `.env` settings
 
@@ -197,12 +223,15 @@ docker compose -f docker-compose.yml -f tests/docker-compose.test.yml up -d
 ## Layout
 
 ```
-docker-compose.yml       6 agent services
+docker-compose.yml       6 agent services (prebuilt image)
+docker-compose.build.yml build the image from source instead
+install.sh / install.ps1 one-command installers
 .env.example             configuration template
 agent/Dockerfile         shared image (role is set by ROLE)
 agent/app/lead.py        Team Lead: FastAPI UI/API, orchestration, SQLite
 agent/app/worker.py      role agent: POST /run → CrewAI Agent + tools
 agent/app/common.py      LLM factory (per-role key), tools: files/shell, events
+agent/app/setup_checks.py setup wizard: providers, connection checks, error messages (en/ru)
 agent/app/repo_tool.py   creating a repository and pushing (GitLab API v4 / GitHub API v3)
 agent/app/roles.py       role descriptions (prompts)
 agent/app/static/        web interface
@@ -217,13 +246,20 @@ MODELS.md                which model for which role
 
 Issues and pull requests are welcome, see [CONTRIBUTING.md](CONTRIBUTING.md). Changes: [CHANGELOG.md](CHANGELOG.md).
 
-## Support the project
+## Support the author
 
-If AI DevTeam saves you time, you can support its development:
+AI DevTeam is free and open source. If it saves you time, you can support its development:
 
-[![Sponsor](https://img.shields.io/badge/Sponsor-%E2%9D%A4-db61a2?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/nikvladimirovich2)
+[![Sponsor on GitHub](https://img.shields.io/badge/Sponsor_on_GitHub-%E2%9D%A4-db61a2?logo=githubsponsors&logoColor=white&style=for-the-badge)](https://github.com/sponsors/nikvladimirovich2)
 
-A star ⭐ helps too.
+**USDT (TRC20, Tron network only):**
+
+```
+TWxXpymgNDHtRo5XN2oHUoB2TN3PuHQ5S9
+```
+
+Send only USDT on the **TRC20** network to this address; other networks or tokens will be lost.
+A star ⭐ and a link to the project help too.
 
 ## License
 

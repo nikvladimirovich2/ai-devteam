@@ -21,7 +21,13 @@ and gives one of them (DevOps) a Git token. Treat it like a CI runner that execu
   unsigned calls get `403`.
 - No Docker socket in the containers; agents run without root.
 
+- Settings from the setup wizard: the model key is stored in the lead's database (`leaddata` volume), the Git
+  token only in the devops volume (`devopsdata`, mode 0600). Neither directory is readable by the agents' shell user.
+  The interface password is stored as a PBKDF2 hash.
+
 Known limits: all tasks share the `workspace` volume, and outbound network access is not filtered.
+Before a password is set, anyone who can open the interface can configure it: keep it on `127.0.0.1`
+until you have set the password.
 
 ## Reporting a vulnerability
 Please report privately through **GitHub → Security → Report a vulnerability**

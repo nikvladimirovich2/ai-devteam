@@ -2,6 +2,22 @@
 
 Format: [Keep a Changelog](https://keepachangelog.com/), versions: [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- One-command installers: `install.ps1` (Windows, WSL containers, desktop shortcut) and `install.sh` (Linux/macOS, Docker).
+- Prebuilt image `ghcr.io/nikvladimirovich2/ai-devteam` (workflow `image.yml`); `docker-compose.build.yml` builds from source.
+- Setup wizard in the web interface (⚙ Setup, English/Russian): model provider presets (OpenAI, Anthropic, Gemini,
+  OpenRouter, DeepSeek, Ollama, vLLM, other), model list, a check that the model calls tools; GitHub/GitLab with a
+  link to the token page with the right scopes and an access check; interface password. `.env` is optional now.
+- One API key for the whole team (`LLM_API_KEY`), personal keys per role still possible.
+- Company CA certificates at runtime (`CERTS_DIR` mounted at `/certs`), no rebuild needed.
+- Human-readable error messages (en/ru) in the wizard and in the task feed.
+
+### Security
+- The Git token set in the wizard is checked and stored only by devops (`devopsdata` volume, 0600, not readable by the
+  agents' shell user); the lead never stores it. `/config/git` is a signed internal endpoint.
+
 ## [0.1.0] - 2026-11-22
 First public release.
 
