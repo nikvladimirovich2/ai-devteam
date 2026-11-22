@@ -1,3 +1,5 @@
+**English** · [Русский](DEPLOY.ru.md) · [Srpski](DEPLOY.sr.md) · [中文](DEPLOY.zh.md)
+
 # Deployment guide
 
 Step-by-step installation of AI DevTeam on a clean host. Takes ~15 minutes.

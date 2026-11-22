@@ -4,6 +4,7 @@
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![Sponsor](https://img.shields.io/badge/sponsor-%E2%9D%A4-db61a2?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/nikvladimirovich2)
 [![USDT TRC20](https://img.shields.io/badge/donate-USDT%20TRC20-26a17b?logo=tether&logoColor=white)](#support-the-author)
+[![USDC Solana](https://img.shields.io/badge/donate-USDC%20Solana-2775ca?logo=solana&logoColor=white)](#support-the-author)
 
 **A self-hosted AI development team that turns a task into a tested project in your own GitLab or GitHub,
 using your own model.** Built for closed environments: vLLM / Ollama / GigaChat, private CA
@@ -58,7 +59,7 @@ Company certificates (private CA): put `*.crt` into the `certs` folder of the in
 > Works best for small and medium projects (a website, a bot, an API, an internal service). Review the result
 > before using it in production.
 
-Manual installation, servers, all settings: **[DEPLOY.md](DEPLOY.md)**. Model choice per role: **[MODELS.md](MODELS.md)**.
+Manual installation, servers, all settings: **[DEPLOY.md](DEPLOY.md)** · [на русском](DEPLOY.ru.md) · [na srpskom](DEPLOY.sr.md) · [中文](DEPLOY.zh.md). Model choice per role: **[MODELS.md](MODELS.md)**.
 
 <details><summary>From the source code (developers, closed networks)</summary>
 
@@ -252,13 +253,16 @@ AI DevTeam is free and open source. If it saves you time, you can support its de
 
 [![Sponsor on GitHub](https://img.shields.io/badge/Sponsor_on_GitHub-%E2%9D%A4-db61a2?logo=githubsponsors&logoColor=white&style=for-the-badge)](https://github.com/sponsors/nikvladimirovich2)
 
-**USDT (TRC20, Tron network only):**
+**Crypto** (scan the QR code with your wallet or copy the address):
 
-```
-TWxXpymgNDHtRo5XN2oHUoB2TN3PuHQ5S9
-```
+| USDT · **TRC20** (Tron) | USDC · **Solana** |
+|:---:|:---:|
+| <img src=".github/assets/usdt-trc20.png" width="180" alt="USDT TRC20 QR code"> | <img src=".github/assets/usdc-solana.png" width="180" alt="USDC Solana QR code"> |
+| `TWxXpymgNDHtRo5XN2oHUoB2TN3PuHQ5S9` | `Bp4ZTpF8SaZhY6Xv9NwbfiZ6RLFAioZWipyMHUb4emAD` |
 
-Send only USDT on the **TRC20** network to this address; other networks or tokens will be lost.
+Send each token **only on its network**: USDT only via TRC20 (Tron), USDC only via Solana.
+A transfer on another network or of another token is lost.
+
 A star ⭐ and a link to the project help too.
 
 ## License
