@@ -2,7 +2,9 @@
 
 Format: [Keep a Changelog](https://keepachangelog.com/), versions: [SemVer](https://semver.org/).
 
-## [Unreleased]
+## [0.2.0] - 2026-11-22
+
+Start in one step: install with one command, set up everything in the browser.
 
 ### Added
 - One-command installers: `install.ps1` (Windows, WSL containers, desktop shortcut) and `install.sh` (Linux/macOS, Docker).
@@ -13,6 +15,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versions: [SemVer](http
 - One API key for the whole team (`LLM_API_KEY`), personal keys per role still possible.
 - Company CA certificates at runtime (`CERTS_DIR` mounted at `/certs`), no rebuild needed.
 - Human-readable error messages (en/ru) in the wizard and in the task feed.
+- Deployment guide in Russian, Serbian and Chinese; support the author (GitHub Sponsors, USDT TRC20, USDC Solana).
 
 ### Security
 - The Git token set in the wizard is checked and stored only by devops (`devopsdata` volume, 0600, not readable by the
