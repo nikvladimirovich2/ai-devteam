@@ -71,7 +71,7 @@ Podešavanje u `.env`:
 | `LEAD_API_KEY` … `DEVOPS_API_KEY` | | …ili 6 ličnih ključeva, po jedan za svaku ulogu (imaju prednost nad `LLM_API_KEY`) |
 | `GIT_URL` | `https://gitlab.corp.local` ili `https://github.com` | provajder se određuje iz URL-a |
 | `GIT_TOKEN` | | pogledajte «Git tokeni» ispod |
-| `GIT_NAMESPACE` | `ai-team` | GitLab grupa (obavezno) / GitHub organizacija (prazno = lični nalog) |
+| `GIT_NAMESPACE` | `ai-team` | GitLab grupa / GitHub organizacija (prazno = lični nalog vlasnika tokena) |
 | `INTERNAL_SECRET` | `openssl rand -hex 32` | ≥ 32 karaktera; potpisuje zahteve između kontejnera (pogledajte ispod) |
 
 Preporučeno:

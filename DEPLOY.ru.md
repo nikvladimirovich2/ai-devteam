@@ -71,7 +71,7 @@ $EDITOR .env
 | `LEAD_API_KEY` … `DEVOPS_API_KEY` | | …или 6 персональных ключей, по одному на роль (приоритетнее `LLM_API_KEY`) |
 | `GIT_URL` | `https://gitlab.corp.local` или `https://github.com` | провайдер определяется по URL |
 | `GIT_TOKEN` | | см. «Токены Git» ниже |
-| `GIT_NAMESPACE` | `ai-team` | группа GitLab (обязательно) / организация GitHub (пусто = личный аккаунт) |
+| `GIT_NAMESPACE` | `ai-team` | группа GitLab / организация GitHub (пусто = личный аккаунт владельца токена) |
 | `INTERNAL_SECRET` | `openssl rand -hex 32` | ≥ 32 символов; подписывает запросы между контейнерами (см. ниже) |
 
 Рекомендуется:

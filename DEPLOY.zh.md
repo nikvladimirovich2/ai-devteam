@@ -71,7 +71,7 @@ $EDITOR .env
 | `LEAD_API_KEY` … `DEVOPS_API_KEY` | | ……或者 6 个独立密钥，每个角色一个（优先于 `LLM_API_KEY`） |
 | `GIT_URL` | `https://gitlab.corp.local` 或 `https://github.com` | 根据 URL 自动识别提供方 |
 | `GIT_TOKEN` | | 参见下文 «Git 令牌» |
-| `GIT_NAMESPACE` | `ai-team` | GitLab 群组（必填）/ GitHub 组织（留空 = 个人账号） |
+| `GIT_NAMESPACE` | `ai-team` | GitLab 群组 / GitHub 组织（留空 = 令牌所有者的个人账号） |
 | `INTERNAL_SECRET` | `openssl rand -hex 32` | ≥ 32 个字符；用于对容器之间的请求签名（见下文） |
 
 推荐配置：

@@ -51,6 +51,17 @@ def _slug(name: str) -> str:
 
 # ------------------------------------------------------------------ providers
 
+def _gitlab_namespace(c: dict) -> dict:
+    """Empty GIT_NAMESPACE on GitLab = the token owner's personal namespace (like check_access and GitHub)."""
+    if c["provider"] == "gitlab" and not c["namespace"]:
+        with httpx.Client(headers={"PRIVATE-TOKEN": c["token"]}, verify=not c["insecure"], timeout=30) as h:
+            me = h.get(f"{c['url']}/api/v4/user")
+            if me.status_code != 200:
+                raise RuntimeError(f"GitLab: cannot read the token's user: HTTP {me.status_code} {me.text[:300]}")
+            c["namespace"] = me.json()["username"]
+    return c
+
+
 def _ensure_gitlab(c: dict, name: str, path: str, description: str) -> dict:
     api = f"{c['url']}/api/v4"
     with httpx.Client(headers={"PRIVATE-TOKEN": c["token"]}, verify=not c["insecure"], timeout=60) as h:
@@ -180,8 +191,7 @@ def publish(project_name: str, description: str, commit_message: str) -> dict:
     c = cfg()
     if not (c["url"] and c["token"]):
         raise RuntimeError("GIT_URL / GIT_TOKEN are not set in .env")
-    if c["provider"] == "gitlab" and not c["namespace"]:
-        raise RuntimeError("GIT_NAMESPACE (GitLab group) is not set in .env")
+    _gitlab_namespace(c)
     path = _slug(project_name)
     ensure = _ensure_github if c["provider"] == "github" else _ensure_gitlab
     remote = ensure(c, project_name, path, description)
@@ -319,6 +329,7 @@ def ci_status(project_name: str, sha: str, timeout_s: int | None = None) -> dict
     poll = int(env("CI_POLL_INTERVAL", "15"))
     fn = _ci_github if c["provider"] == "github" else _ci_gitlab
     try:
+        _gitlab_namespace(c)
         return fn(c, _slug(project_name), sha, timeout_s, poll)
     except Exception as e:
         return {"status": "error", "details": f"{type(e).__name__}: {e}"}

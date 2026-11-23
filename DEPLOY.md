@@ -71,7 +71,7 @@ Configuring in `.env`:
 | `LEAD_API_KEY` … `DEVOPS_API_KEY` | | …or 6 personal keys, one per role (win over `LLM_API_KEY`) |
 | `GIT_URL` | `https://gitlab.corp.local` or `https://github.com` | provider is detected from the URL |
 | `GIT_TOKEN` | | see «Git tokens» below |
-| `GIT_NAMESPACE` | `ai-team` | GitLab group (required) / GitHub org (empty = personal account) |
+| `GIT_NAMESPACE` | `ai-team` | GitLab group / GitHub org (empty = the token owner's personal account) |
 | `INTERNAL_SECRET` | `openssl rand -hex 32` | ≥ 32 characters; signs the requests between the containers (see below) |
 
 Recommended:
