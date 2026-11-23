@@ -151,6 +151,34 @@ docker compose restart
 curl -s --cacert agent/certs/llm.crt "$LLM_BASE_URL/models" -H "Authorization: Bearer <key>" | jq '.data[].id'
 ```
 
+### 模型服务器在同一台计算机上（Ollama、LM Studio、vLLM）
+
+在容器内部，`127.0.0.1` / `localhost` 指的是**容器本身**，而不是您的计算机，因此
+`http://127.0.0.1:11434` 无法访问与团队运行在同一台机器上的 Ollama。在 `⚙ Setup`（或 `LLM_BASE_URL`）中仍然可以填写
+`localhost`：智能体会自动将其替换为计算机的地址——Docker 中为 `host.docker.internal`，Windows 上的 wslc 中为
+`vEthernet (WSL)` 适配器的 IP（`wslc-up.ps1` 会找到它并以 `HOST_GATEWAY` 传入）。模型服务器端需要做两件事：
+
+1. **监听所有网络接口**，而不仅是 `127.0.0.1`（Ollama 的默认设置）：
+
+   | 系统 | Ollama |
+   |---|---|
+   | Windows | `setx OLLAMA_HOST 0.0.0.0`，然后在托盘中退出 Ollama 并重新启动 |
+   | Linux（systemd） | `sudo systemctl edit ollama` → `[Service]` `Environment="OLLAMA_HOST=0.0.0.0"`，然后 `sudo systemctl restart ollama` |
+   | macOS | `launchctl setenv OLLAMA_HOST 0.0.0.0`，然后重启 Ollama 应用 |
+
+   LM Studio：*Developer → Server settings → Serve on local network*。vLLM：`--host 0.0.0.0`。
+2. **在防火墙中放行，且仅限容器。** Windows（以管理员身份运行 PowerShell；适配器名称可用 `Get-NetAdapter` 查看）：
+
+   ```powershell
+   New-NetFirewallRule -DisplayName "Ollama for AI DevTeam" -Direction Inbound -Protocol TCP -LocalPort 11434 -InterfaceAlias "vEthernet (WSL)" -Action Allow
+   ```
+
+   使用 ufw 的 Linux：`sudo ufw allow in on docker0 to any port 11434 proto tcp`（以及 compose 网络的网桥，
+   `ip link | grep br-`）。
+
+监听 `0.0.0.0` 会使 Ollama 也能从局域网访问，而 Ollama 没有密码：请像上面那样把防火墙规则限制在容器的适配器上。
+如果 `⚙ Setup` 中的检查提示本机的模型服务器不响应容器，说明这两个步骤中有一个没有完成。
+
 ## 6. 启动
 
 ```bash

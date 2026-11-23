@@ -2,6 +2,14 @@
 
 Format: [Keep a Changelog](https://keepachangelog.com/), versions: [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+- A model server on the same computer (Ollama, LM Studio, vLLM): `localhost` / `127.0.0.1` in the model address now
+  means the computer, not the container — it is replaced by `host.docker.internal` (Docker) or the IP of the
+  `vEthernet (WSL)` adapter (`HOST_GATEWAY`, set by `wslc-up.ps1`). The wizard explains `OLLAMA_HOST=0.0.0.0` and the
+  firewall when such a server does not answer. Docs: DEPLOY.md § 5, all languages.
+
 ## [0.2.2] - 2026-11-22
 
 ### Added

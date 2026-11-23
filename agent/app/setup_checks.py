@@ -7,6 +7,8 @@ plus the technical detail, so a person who is not a developer knows what to do n
 from __future__ import annotations
 
 import json
+import os
+import urllib.parse
 from typing import Any
 
 import httpx
@@ -27,13 +29,40 @@ PROVIDERS: dict[str, dict[str, Any]] = {
                    "key_url": "https://openrouter.ai/keys", "needs_key": True},
     "deepseek": {"name": "DeepSeek", "prefix": "openai/", "base": "https://api.deepseek.com/v1", "models": "openai",
                  "key_url": "https://platform.deepseek.com/api_keys", "needs_key": True},
-    "ollama": {"name": "Ollama (own server)", "prefix": "ollama/", "base": "http://host.docker.internal:11434",
+    "ollama": {"name": "Ollama (this computer or own server)", "prefix": "ollama/", "base": "http://localhost:11434",
                "models": "ollama", "key_url": "", "needs_key": False},
     "vllm": {"name": "vLLM / OpenAI-compatible (own server)", "prefix": "hosted_vllm/",
              "base": "http://llm-server:8000/v1", "models": "openai", "key_url": "", "needs_key": False},
     "custom": {"name": "Other (LiteLLM model name)", "prefix": "", "base": "", "models": "", "key_url": "",
                "needs_key": False},
 }
+
+
+# ---------------------------------------------------------------- a model server on the same machine
+
+# Inside a container 127.0.0.1 / localhost is the container itself, not the computer. A model server
+# on the same machine (Ollama, vLLM, LM Studio) is reached through the host's address instead:
+#   Docker:              host.docker.internal (docker-compose.yml maps it to the host gateway)
+#   Windows, wslc:       the IP of the "vEthernet (WSL)" adapter, passed by wslc-up.ps1 as HOST_GATEWAY
+# The user may type any of these names; the saved setting keeps what they typed.
+LOCAL_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "::1", "host.docker.internal"}
+
+
+def host_gateway() -> str:
+    return os.environ.get("HOST_GATEWAY", "").strip() or "host.docker.internal"
+
+
+def is_local(url: str) -> bool:
+    return (urllib.parse.urlparse(url or "").hostname or "") in LOCAL_HOSTS
+
+
+def container_url(url: str) -> str:
+    """The address the containers must use for [url] (unchanged unless it points to this machine)."""
+    if not url or not is_local(url):
+        return url
+    p = urllib.parse.urlparse(url)
+    netloc = host_gateway() + (f":{p.port}" if p.port else "")
+    return urllib.parse.urlunparse(p._replace(netloc=netloc))
 
 
 def model_id(provider: str, model: str) -> str:
@@ -76,6 +105,13 @@ MESSAGES: dict[str, dict[str, str]] = {
                     "ru": "Агент DevOps не запущен. Перезапустите команду и попробуйте снова."},
     "context_too_long": {"en": "The task no longer fits into the model's context. Use a model with a bigger context or split the task.",
                          "ru": "Задача не помещается в контекст модели. Возьмите модель с большим контекстом или разделите задачу."},
+    "local_unreachable": {
+        "en": "The model server on this computer does not answer the containers. Inside a container 127.0.0.1 is the container itself, "
+              "so the computer's address ({gw}) was used. Make the server listen on all interfaces "
+              "(Ollama: set the environment variable OLLAMA_HOST=0.0.0.0 and restart Ollama) and allow it in the firewall.",
+        "ru": "Сервер модели на этом компьютере не отвечает контейнерам. Внутри контейнера 127.0.0.1 — это сам контейнер, "
+              "поэтому использован адрес компьютера ({gw}). Сервер должен слушать все интерфейсы "
+              "(Ollama: задайте переменную среды OLLAMA_HOST=0.0.0.0 и перезапустите Ollama) и быть разрешён в брандмауэре."},
     "unknown": {"en": "Something went wrong. The technical details are below.",
                 "ru": "Что-то пошло не так. Технические подробности ниже."},
 }
@@ -83,7 +119,7 @@ MESSAGES: dict[str, dict[str, str]] = {
 
 def message(code: str, lang: str = "en") -> str:
     m = MESSAGES.get(code, MESSAGES["unknown"])
-    return m.get(lang) or m["en"]
+    return (m.get(lang) or m["en"]).replace("{gw}", host_gateway())
 
 
 def classify(e: BaseException) -> str:
@@ -127,7 +163,7 @@ def list_models(provider: str, base_url: str, api_key: str, verify: Any = True) 
     """Model names the key can use, for the wizard's drop-down. Empty list when not supported."""
     p = PROVIDERS.get(provider, PROVIDERS["custom"])
     kind = p["models"]
-    base = (base_url or p["base"] or "").rstrip("/")
+    base = container_url((base_url or p["base"] or "").rstrip("/"))
     try:
         if kind == "openai":
             r = httpx.get(f"{base}/models", headers={"Authorization": f"Bearer {api_key}"} if api_key else {},
@@ -157,7 +193,8 @@ def list_models(provider: str, base_url: str, api_key: str, verify: Any = True) 
         else:
             names = []
     except Exception as e:  # noqa: BLE001 - every failure becomes a message for the user
-        return _fail(classify(e), e)
+        code = classify(e)
+        return _fail("local_unreachable" if code == "unreachable" and is_local(base_url or p["base"] or "") else code, e)
     return {"ok": True, "code": "ok", "models": names}
 
 
@@ -175,13 +212,14 @@ def check_llm(model: str, base_url: str, api_key: str, ssl_verify: Any = True) -
                               "tools": [PING_TOOL], "tool_choice": "auto",
                               "messages": [{"role": "user", "content": "Call the devteam_ping tool with ok=true. Do not answer with text."}]}
     if base_url:
-        kwargs["api_base"] = base_url
+        kwargs["api_base"] = container_url(base_url)
     if ssl_verify is not True:
         kwargs["ssl_verify"] = ssl_verify
     try:
         r = litellm.completion(**kwargs)
     except Exception as e:  # noqa: BLE001
-        return _fail(classify(e), e)
+        code = classify(e)
+        return _fail("local_unreachable" if code == "unreachable" and is_local(base_url) else code, e)
     msg = r.choices[0].message
     calls = getattr(msg, "tool_calls", None) or []
     if not calls:

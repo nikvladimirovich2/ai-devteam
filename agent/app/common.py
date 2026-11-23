@@ -133,7 +133,8 @@ def _context_window(model: str, api_key: str) -> int:
     forced = int(env("LLM_CONTEXT_WINDOW", "0") or 0)
     if forced > 0:
         return forced
-    base = env("LLM_BASE_URL").rstrip("/")
+    from setup_checks import container_url
+    base = container_url(env("LLM_BASE_URL").rstrip("/"))
     if not base:
         return 0
     name = model.split("/", 1)[1] if "/" in model else model
@@ -173,7 +174,8 @@ def build_llm(role: str = ROLE) -> LLM:
         "temperature": float(env("LLM_TEMPERATURE", "0.2")),
         "timeout": float(env("LLM_TIMEOUT", "600")),
     }
-    base_url = env("LLM_BASE_URL")
+    from setup_checks import container_url
+    base_url = container_url(env("LLM_BASE_URL"))    # localhost -> the host, see setup_checks
     if base_url:
         kwargs["base_url"] = base_url
     max_tokens = int(env("LLM_MAX_TOKENS", "0") or 0)

@@ -151,6 +151,37 @@ Quick manual check:
 curl -s --cacert agent/certs/llm.crt "$LLM_BASE_URL/models" -H "Authorization: Bearer <key>" | jq '.data[].id'
 ```
 
+### Model server on the same computer (Ollama, LM Studio, vLLM)
+
+Inside a container `127.0.0.1` / `localhost` is **the container itself**, not your computer, so
+`http://127.0.0.1:11434` does not reach an Ollama running next to the team. You may still type `localhost`
+in ⚙ Setup (or `LLM_BASE_URL`): the agents replace it with the computer's address automatically —
+`host.docker.internal` with Docker, the IP of the `vEthernet (WSL)` adapter with wslc on Windows
+(`wslc-up.ps1` finds it and passes it as `HOST_GATEWAY`). Two things are needed on the model server:
+
+1. **Listen on all interfaces**, not only on `127.0.0.1` (Ollama's default):
+
+   | System | Ollama |
+   |---|---|
+   | Windows | `setx OLLAMA_HOST 0.0.0.0`, then quit Ollama in the tray and start it again |
+   | Linux (systemd) | `sudo systemctl edit ollama` → `[Service]` `Environment="OLLAMA_HOST=0.0.0.0"`, then `sudo systemctl restart ollama` |
+   | macOS | `launchctl setenv OLLAMA_HOST 0.0.0.0`, then restart the Ollama app |
+
+   LM Studio: *Developer → Server settings → Serve on local network*. vLLM: `--host 0.0.0.0`.
+2. **Allow it in the firewall, only for the containers.** Windows (PowerShell as administrator; the adapter
+   name is shown by `Get-NetAdapter`):
+
+   ```powershell
+   New-NetFirewallRule -DisplayName "Ollama for AI DevTeam" -Direction Inbound -Protocol TCP -LocalPort 11434 -InterfaceAlias "vEthernet (WSL)" -Action Allow
+   ```
+
+   Linux with ufw: `sudo ufw allow in on docker0 to any port 11434 proto tcp` (and the bridge of the
+   compose network, `ip link | grep br-`).
+
+Listening on `0.0.0.0` makes Ollama reachable from the local network too, and Ollama has no password:
+keep the firewall rule limited to the containers' adapter as above. If the check in ⚙ Setup says
+«The model server on this computer does not answer the containers», one of the two steps is missing.
+
 ## 6. Start
 
 ```bash

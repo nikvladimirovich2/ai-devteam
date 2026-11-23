@@ -151,6 +151,37 @@ SAN сертификата должен содержать хост из `LLM_BA
 curl -s --cacert agent/certs/llm.crt "$LLM_BASE_URL/models" -H "Authorization: Bearer <key>" | jq '.data[].id'
 ```
 
+### Сервер модели на этом же компьютере (Ollama, LM Studio, vLLM)
+
+Внутри контейнера `127.0.0.1` / `localhost` — это **сам контейнер**, а не ваш компьютер, поэтому
+`http://127.0.0.1:11434` не достучится до Ollama, запущенной рядом с командой. В «⚙ Настройка» (или в `LLM_BASE_URL`)
+всё равно можно писать `localhost`: агенты сами заменят его на адрес компьютера — `host.docker.internal` в Docker,
+IP адаптера `vEthernet (WSL)` в wslc на Windows (`wslc-up.ps1` находит его и передаёт как `HOST_GATEWAY`).
+На сервере модели нужно сделать две вещи:
+
+1. **Слушать все интерфейсы**, а не только `127.0.0.1` (так Ollama работает по умолчанию):
+
+   | Система | Ollama |
+   |---|---|
+   | Windows | `setx OLLAMA_HOST 0.0.0.0`, затем закрыть Ollama в трее и запустить снова |
+   | Linux (systemd) | `sudo systemctl edit ollama` → `[Service]` `Environment="OLLAMA_HOST=0.0.0.0"`, затем `sudo systemctl restart ollama` |
+   | macOS | `launchctl setenv OLLAMA_HOST 0.0.0.0`, затем перезапустить приложение Ollama |
+
+   LM Studio: *Developer → Server settings → Serve on local network*. vLLM: `--host 0.0.0.0`.
+2. **Разрешить в брандмауэре, только для контейнеров.** Windows (PowerShell от администратора; имя адаптера
+   показывает `Get-NetAdapter`):
+
+   ```powershell
+   New-NetFirewallRule -DisplayName "Ollama for AI DevTeam" -Direction Inbound -Protocol TCP -LocalPort 11434 -InterfaceAlias "vEthernet (WSL)" -Action Allow
+   ```
+
+   Linux с ufw: `sudo ufw allow in on docker0 to any port 11434 proto tcp` (и для моста сети compose,
+   `ip link | grep br-`).
+
+При прослушивании `0.0.0.0` Ollama становится доступна и из локальной сети, а пароля у неё нет:
+ограничьте правило брандмауэра адаптером контейнеров, как выше. Если проверка в «⚙ Настройка» пишет
+«Сервер модели на этом компьютере не отвечает контейнерам», не сделан один из двух шагов.
+
 ## 6. Запуск
 
 ```bash

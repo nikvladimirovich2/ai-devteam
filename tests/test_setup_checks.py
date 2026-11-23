@@ -44,5 +44,19 @@ def test_hint_is_empty_for_unknown_errors():
     assert s.hint(AuthenticationError("401"), "ru").startswith("💡 Ключ")
 
 
+def test_localhost_becomes_the_host_address(monkeypatch):
+    monkeypatch.delenv("HOST_GATEWAY", raising=False)
+    assert s.container_url("http://localhost:11434") == "http://host.docker.internal:11434"
+    assert s.container_url("http://127.0.0.1:8000/v1") == "http://host.docker.internal:8000/v1"
+    assert s.container_url("https://api.openai.com/v1") == "https://api.openai.com/v1"
+    assert s.container_url("http://llm.corp.local:8000/v1") == "http://llm.corp.local:8000/v1"
+    assert s.container_url("") == ""
+    monkeypatch.setenv("HOST_GATEWAY", "192.168.144.1")       # Windows, wslc
+    assert s.container_url("http://localhost:11434") == "http://192.168.144.1:11434"
+    assert s.container_url("http://host.docker.internal:11434/api") == "http://192.168.144.1:11434/api"
+    assert "192.168.144.1" in s.message("local_unreachable", "ru")
+    assert "OLLAMA_HOST=0.0.0.0" in s.message("local_unreachable", "en")
+
+
 def test_check_llm_needs_a_model():
     assert s.check_llm("", "", "")["code"] == "missing"

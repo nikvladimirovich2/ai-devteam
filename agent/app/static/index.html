@@ -148,7 +148,8 @@
     <label data-t="provider"></label><select id="sProv" onchange="provChanged()"></select>
     <div id="sKeyBox"><label><span data-t="api_key"></span> <a id="sKeyLink" target="_blank" data-t="get_key"></a></label>
       <input id="sKey" type="password" autocomplete="off"></div>
-    <div id="sBaseBox"><label data-t="base_url"></label><input id="sBase" placeholder="https://host/v1"></div>
+    <div id="sBaseBox"><label data-t="base_url"></label><input id="sBase" placeholder="https://host/v1">
+      <small class="lead" data-t="base_local"></small></div>
     <label data-t="model"></label><input id="sModel" list="sModels" placeholder="gpt-4.1 / claude-sonnet-4-5 / qwen3-coder"><datalist id="sModels"></datalist>
     <div class="row"><button class="sec" type="button" onclick="loadModels()" data-t="load_models"></button>
       <button type="button" onclick="saveLLM(false)" data-t="check_save"></button></div>
@@ -395,6 +396,7 @@ const T = {
        models_none:"Список не получен, впишите название модели вручную.", save_anyway:"Всё равно сохранить",
        saved_pw:"Пароль сохранён. Браузер попросит войти.", short_pw:"Пароль короче 8 символов.", from_env:"задано в .env",
        not_configured:"Сначала настройте модель ИИ (⚙ Настройка).", settings:"⚙ Настройка",
+       base_local:"Сервер на этом же компьютере: можно писать localhost — адрес сам заменится на адрес компьютера. Сервер должен слушать 0.0.0.0 (Ollama: OLLAMA_HOST=0.0.0.0) и быть разрешён в брандмауэре.",
        s_roles:"Модели по ролям (необязательно)", roles_help:"По умолчанию все агенты работают на модели команды. Здесь можно дать роли другую модель того же провайдера, например сильную архитектору и QA, а дешёвую — тимлиду. Пустое поле = модель команды.",
        team_model:"модель команды", team_key:"ключ команды", own_key:"свой ключ", now:"сейчас"},
   en: {setup_title:"Setup", setup_lead:"Three steps: the AI model, where to publish the projects and a password. Keys stay on this server.",
@@ -411,6 +413,7 @@ const T = {
        models_none:"No list available, type the model name.", save_anyway:"Save anyway",
        saved_pw:"Password saved. The browser will ask you to log in.", short_pw:"The password is shorter than 8 characters.", from_env:"set in .env",
        not_configured:"Set up the AI model first (⚙ Setup).", settings:"⚙ Setup",
+       base_local:"A server on this same computer: localhost is fine, it is replaced by the computer's address automatically. The server must listen on 0.0.0.0 (Ollama: OLLAMA_HOST=0.0.0.0) and be allowed in the firewall.",
        s_roles:"Models per role (optional)", roles_help:"By default every agent uses the team's model. Here a role can get another model of the same provider, e.g. a strong one for the architect and QA and a cheap one for the lead. Empty = the team's model.",
        team_model:"the team's model", team_key:"the team's key", own_key:"own key", now:"now"},
 };

@@ -151,6 +151,37 @@ Brza ručna provera:
 curl -s --cacert agent/certs/llm.crt "$LLM_BASE_URL/models" -H "Authorization: Bearer <key>" | jq '.data[].id'
 ```
 
+### Server modela na istom računaru (Ollama, LM Studio, vLLM)
+
+Unutar kontejnera `127.0.0.1` / `localhost` je **sam kontejner**, a ne vaš računar, pa
+`http://127.0.0.1:11434` ne stiže do Ollama koja radi pored tima. U `⚙ Setup` (ili u `LLM_BASE_URL`) ipak
+možete da upišete `localhost`: agenti ga sami zamenjuju adresom računara — `host.docker.internal` u Docker-u,
+IP adaptera `vEthernet (WSL)` u wslc na Windows-u (`wslc-up.ps1` ga pronalazi i prosleđuje kao `HOST_GATEWAY`).
+Na serveru modela su potrebne dve stvari:
+
+1. **Slušati na svim interfejsima**, a ne samo na `127.0.0.1` (podrazumevano za Ollama):
+
+   | Sistem | Ollama |
+   |---|---|
+   | Windows | `setx OLLAMA_HOST 0.0.0.0`, zatim zatvorite Ollama u traci i pokrenite je ponovo |
+   | Linux (systemd) | `sudo systemctl edit ollama` → `[Service]` `Environment="OLLAMA_HOST=0.0.0.0"`, zatim `sudo systemctl restart ollama` |
+   | macOS | `launchctl setenv OLLAMA_HOST 0.0.0.0`, zatim ponovo pokrenite aplikaciju Ollama |
+
+   LM Studio: *Developer → Server settings → Serve on local network*. vLLM: `--host 0.0.0.0`.
+2. **Dozvoliti u zaštitnom zidu, samo za kontejnere.** Windows (PowerShell kao administrator; ime adaptera
+   prikazuje `Get-NetAdapter`):
+
+   ```powershell
+   New-NetFirewallRule -DisplayName "Ollama for AI DevTeam" -Direction Inbound -Protocol TCP -LocalPort 11434 -InterfaceAlias "vEthernet (WSL)" -Action Allow
+   ```
+
+   Linux sa ufw: `sudo ufw allow in on docker0 to any port 11434 proto tcp` (i za most compose mreže,
+   `ip link | grep br-`).
+
+Slušanje na `0.0.0.0` čini Ollama dostupnom i iz lokalne mreže, a Ollama nema lozinku: ograničite pravilo
+zaštitnog zida na adapter kontejnera, kao gore. Ako provera u `⚙ Setup` kaže da server modela na ovom
+računaru ne odgovara kontejnerima, nije urađen jedan od ova dva koraka.
+
 ## 6. Pokretanje
 
 ```bash

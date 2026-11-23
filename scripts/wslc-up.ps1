@@ -58,7 +58,16 @@ if ($bind -ne "127.0.0.1" -and -not ((Get-Cfg "UI_USER") -and (Get-Cfg "UI_PASSW
 $Build = $Build -or $Rebuild
 $IMAGE = if ($Build) { "devteam-agent:latest" } else { Get-Cfg "DEVTEAM_IMAGE" "ghcr.io/nikvladimirovich2/ai-devteam:latest" }
 
-$common = "INTERNAL_SECRET", "LLM_API_KEY", "LLM_MODEL", "LLM_BASE_URL", "LLM_TEMPERATURE", "LLM_MAX_TOKENS", "LLM_CONTEXT_WINDOW", "LLM_TIMEOUT",
+# A model server on this computer (Ollama, LM Studio...): inside a container 127.0.0.1 is the container
+# itself, and wslc has no host.docker.internal. The containers reach Windows through the IP of the
+# "vEthernet (WSL)" adapter; the agents replace localhost/127.0.0.1 in the model address with it.
+if (-not (Get-Cfg "HOST_GATEWAY")) {
+    $gw = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+        Where-Object { $_.InterfaceAlias -like "vEthernet (WSL*" } | Select-Object -First 1 -ExpandProperty IPAddress
+    if ($gw) { $cfg["HOST_GATEWAY"] = $gw }
+}
+
+$common = "INTERNAL_SECRET", "HOST_GATEWAY", "LLM_API_KEY", "LLM_MODEL", "LLM_BASE_URL", "LLM_TEMPERATURE", "LLM_MAX_TOKENS", "LLM_CONTEXT_WINDOW", "LLM_TIMEOUT",
           "LLM_SSL_VERIFY_DISABLE", "LLM_FUNCTION_CALLING", "AGENT_MAX_ITER", "SHELL_TIMEOUT"
 $extra = @{
     lead   = "MAX_QA_ROUNDS", "MAX_CI_ROUNDS", "GIT_PROVIDER", "GIT_URL", "UI_USER", "UI_PASSWORD"
