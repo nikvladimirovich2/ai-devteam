@@ -277,18 +277,36 @@ def project_files(pdir: pathlib.Path) -> list[str]:
     return sorted(out)
 
 
-def require_files(task_id: str, pdir: pathlib.Path, role: str, before: set[str], min_new: int = 1) -> None:
-    """Agents' reports are not proof. Fail fast if a role claimed work but wrote nothing."""
-    now = set(project_files(pdir))
-    new = now - before
-    if len(new) < min_new:
+def project_snapshot(pdir: pathlib.Path) -> dict[str, tuple[int, int]]:
+    """rel path -> (mtime_ns, size): lets us see edited files, not only new ones."""
+    out = {}
+    for rel in project_files(pdir):
+        try:
+            st = (pdir / rel).stat()
+            out[rel] = (st.st_mtime_ns, st.st_size)
+        except OSError:
+            pass
+    return out
+
+
+def require_files(task_id: str, pdir: pathlib.Path, role: str, before: dict[str, tuple[int, int]]) -> None:
+    """Agents' reports are not proof. Fail fast if a role claimed work but neither created nor edited any file."""
+    now = project_snapshot(pdir)
+    new = sorted(set(now) - set(before))
+    edited = sorted(f for f in now if f in before and now[f] != before[f])
+    if not new and not edited:
         raise RuntimeError(
-            f"{role} reported success but did not create files in the project "
+            f"{role} reported success but did not create or change files in the project "
             f"(files: {len(now)}). The model is most likely not calling tools "
             f"(write_file/run_shell) and only describes the work in text. Check that the model "
             f"supports tool calling (vLLM: --enable-auto-tool-choice --tool-call-parser hermes) "
             f"and LLM_FUNCTION_CALLING=auto|1 in .env.")
-    lead_say(task_id, "check", f"🔎 {role}: +{len(new)} files ({', '.join(sorted(new)[:8])}{'…' if len(new) > 8 else ''})")
+    parts = []
+    if new:
+        parts.append(f"+{len(new)} new ({', '.join(new[:8])}{'…' if len(new) > 8 else ''})")
+    if edited:
+        parts.append(f"~{len(edited)} edited ({', '.join(edited[:8])}{'…' if len(edited) > 8 else ''})")
+    lead_say(task_id, "check", f"🔎 {role}: " + "; ".join(parts))
 
 
 def _last_pushed_sha(task_id: str) -> str:
@@ -592,7 +610,7 @@ def run_pipeline(task_id: str, followup: str = "") -> None:
         lead_say(task_id, "plan", f"🗺 Plan «{name}»\n\n{plan.get('summary', '')}\n\nAcceptance criteria:\n{crit}", plan=plan)
 
         # ---------------- 2. architect
-        before = set(project_files(pdir))
+        before = project_snapshot(pdir)
         arch = call_worker(task_id, "architect", "architecture and skeleton",
             "Design the solution and create the project skeleton.\n"
             f"{plan.get('architect_brief', '')}\n"
@@ -615,13 +633,13 @@ def run_pipeline(task_id: str, followup: str = "") -> None:
                 "Do not touch the backend folders.")
         ctx = brief + "\n\nARCHITECT'S REPORT:\n" + arch[:6000]
         reports: dict[str, str] = {}
-        before = set(project_files(pdir))
+        before = project_snapshot(pdir)
         with ThreadPoolExecutor(max_workers=2) as ex:
             futs = {r: ex.submit(call_worker, task_id, r, title, instr, ctx) for r, (title, instr) in dev_jobs.items()}
             for r, f in futs.items():
                 reports[r] = f.result()
         if not followup:
-            require_files(task_id, pdir, "backend/frontend", before, min_new=len(dev_jobs))
+            require_files(task_id, pdir, "backend/frontend", before)
 
         # ---------------- 4. QA loop
         verdict: dict = {}
