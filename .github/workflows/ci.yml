@@ -44,7 +44,12 @@ jobs:
       - name: Team is up
         run: |
           port=$(grep '^UI_PORT=' $RUNNER_TEMP/ai-devteam/.env | cut -d= -f2)
-          curl -fs "http://127.0.0.1:$port/api/team" | python3 -c 'import json,sys; t=json.load(sys.stdin); assert all(v["ok"] for v in t.values()), t; print("6 agents ok")'
+          # install.sh waits for the Lead only; the workers may need a few more seconds
+          for i in $(seq 1 24); do
+            curl -fs "http://127.0.0.1:$port/api/team" > team.json && python3 -c 'import json; t=json.load(open("team.json")); assert all(v["ok"] for v in t.values())' 2>/dev/null && break
+            sleep 5
+          done
+          python3 -c 'import json; t=json.load(open("team.json")); assert all(v["ok"] for v in t.values()), t; print("6 agents ok")'
       - name: Stop and start
         run: cd $RUNNER_TEMP/ai-devteam && docker compose stop && docker compose start && sleep 5 && docker compose ps
       - name: Uninstall
