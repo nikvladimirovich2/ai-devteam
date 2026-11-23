@@ -2,7 +2,7 @@
 
 Format: [Keep a Changelog](https://keepachangelog.com/), versions: [SemVer](https://semver.org/).
 
-## [Unreleased]
+## [0.2.4] - 2026-11-23
 
 ### Added
 - «🎲 Example task» button next to Send: puts a random tiny project (tip calculator, password generator, to-do list,
