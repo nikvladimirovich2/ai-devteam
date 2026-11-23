@@ -2,7 +2,7 @@
 
 Format: [Keep a Changelog](https://keepachangelog.com/), versions: [SemVer](https://semver.org/).
 
-## [Unreleased]
+## [0.2.3] - 2026-11-23
 
 ### Fixed
 - A model server on the same computer (Ollama, LM Studio, vLLM): `localhost` / `127.0.0.1` in the model address now
