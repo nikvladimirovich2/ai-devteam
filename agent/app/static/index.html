@@ -123,6 +123,7 @@
       <textarea id="prompt" placeholder="E.g.: Build a REST service + web page for managing a task list (CRUD, filters by status), with SQLite storage and tests."></textarea>
       <div style="display:flex;flex-direction:column;gap:6px">
         <button id="sendBtn">Send to Team Lead</button>
+        <button type="button" class="sec" id="demoBtn" onclick="demoTask()" data-t="demo_btn"></button>
         <button type="button" class="sec" id="cancelBtn" onclick="cancelTask()" style="display:none">Stop</button>
         <button type="button" class="sec" id="ciBtn" onclick="checkCi()" style="display:none" title="Check the pipeline status and fix errors automatically">🔧 CI</button>
         <button type="button" class="sec" id="delBtn" onclick="cur && deleteTask(cur.id)" style="display:none" title="Delete this task">🗑 Delete</button>
@@ -265,6 +266,7 @@ function renderHead() {
   const running = ["running", "queued"].includes(cur.status);
   $("#cancelBtn").style.display = running ? "" : "none";
   $("#delBtn").style.display = running ? "none" : "";
+  $("#demoBtn").style.display = "none";
   $("#ciBtn").style.display = (!running && cur.gitlab_url) ? "" : "none";
   $("#sendBtn").textContent = cur ? "Send revision" : "Send to Team Lead";
   $("#sendBtn").disabled = running;
@@ -318,7 +320,7 @@ function newTask() {
   cur = null; events = []; if (es) es.close(); es = null;
   $("#title").innerHTML = "<b>New task for the Team Lead</b>"; $("#stage").textContent = "Describe the product you need.";
   $("#log").innerHTML = ""; $("#files").innerHTML = ""; $("#gl").innerHTML = ""; $("#viewer").style.display = "none";
-  $("#cancelBtn").style.display = "none"; $("#delBtn").style.display = "none"; $("#sendBtn").disabled = false; $("#sendBtn").textContent = "Send to Team Lead";
+  $("#cancelBtn").style.display = "none"; $("#delBtn").style.display = "none"; $("#demoBtn").style.display = ""; $("#sendBtn").disabled = false; $("#sendBtn").textContent = "Send to Team Lead";
   $("#prompt").placeholder = "E.g.: Build a REST service + web page for managing a task list…"; loadTasks();
 }
 
@@ -343,6 +345,42 @@ function downloadReport(id) {
   a.href = URL.createObjectURL(new Blob([reportText(id)], {type: "text/plain;charset=utf-8"}));
   a.download = `report-${cur ? cur.id : "task"}.txt`; a.click(); URL.revokeObjectURL(a.href);
 }
+// ---------------------------------------------------------------- example task
+// A tiny project to try the team out and check that everything works: no database, no server,
+// a few files, tests. It goes into the text box; nothing is sent until "Send".
+const DEMO_TASKS = {
+  ru: [
+    "Сделай одностраничный калькулятор чаевых на HTML, CSS и JavaScript: сумма счёта, процент чаевых (10/15/20 % или свой), число человек; показывать чаевые и сумму на каждого.",
+    "Сделай веб-страницу «Генератор паролей» на HTML, CSS и JavaScript: длина от 8 до 64, галочки «цифры», «буквы в верхнем регистре», «символы», кнопка «Скопировать».",
+    "Сделай одностраничный список дел на HTML, CSS и JavaScript: добавить, отметить выполненным, удалить, фильтр «все / активные / выполненные», данные хранятся в localStorage.",
+    "Сделай веб-страницу «Конвертер единиц» на HTML, CSS и JavaScript: длина (м, км, футы, мили), вес (кг, фунты), температура (°C, °F, K), пересчёт при вводе.",
+    "Сделай консольную программу на Python «Счётчик слов»: читает текстовый файл и выводит число строк, слов, символов и 10 самых частых слов.",
+    "Сделай веб-страницу «Таймер Помодоро» на HTML, CSS и JavaScript: 25 минут работы, 5 минут отдыха, кнопки «Старт», «Пауза», «Сброс», звуковой сигнал в конце.",
+  ],
+  en: [
+    "Build a one-page tip calculator in HTML, CSS and JavaScript: bill amount, tip percentage (10/15/20 % or custom), number of people; show the tip and the amount per person.",
+    "Build a \"Password generator\" web page in HTML, CSS and JavaScript: length 8 to 64, checkboxes for digits, upper-case letters and symbols, a Copy button.",
+    "Build a one-page to-do list in HTML, CSS and JavaScript: add, mark as done, delete, filter all / active / done, keep the data in localStorage.",
+    "Build a \"Unit converter\" web page in HTML, CSS and JavaScript: length (m, km, feet, miles), weight (kg, pounds), temperature (°C, °F, K), converting as you type.",
+    "Build a Python command-line \"Word counter\": it reads a text file and prints the number of lines, words, characters and the 10 most frequent words.",
+    "Build a \"Pomodoro timer\" web page in HTML, CSS and JavaScript: 25 minutes of work, 5 minutes of rest, Start / Pause / Reset buttons, a sound at the end.",
+  ],
+};
+const DEMO_TAIL = {
+  ru: "\n\nЭто демонстрационное задание: сделай минимально — без базы данных и серверной части, несколько файлов, модульные тесты для логики и короткий README.",
+  en: "\n\nThis is a demo task: keep it minimal — no database and no backend, a few files, unit tests for the logic and a short README.",
+};
+let demoLast = -1;
+function demoTask() {
+  const list = DEMO_TASKS[LANG] || DEMO_TASKS.en;
+  let i; do { i = Math.floor(Math.random() * list.length); } while (list.length > 1 && i === demoLast);
+  demoLast = i;
+  const p = $("#prompt");
+  p.value = list[i] + (DEMO_TAIL[LANG] || DEMO_TAIL.en);
+  p.focus(); p.setSelectionRange(0, 0); p.scrollTop = 0;     // show the task, not the tail
+  p.style.height = Math.min(240, p.scrollHeight + 4) + "px";
+}
+
 async function checkCi() {
   if (!cur) return;
   try { await api(`/api/tasks/${cur.id}/ci`, {method: "POST"}); await loadTasks(); renderHead(); }
@@ -398,7 +436,8 @@ const T = {
        not_configured:"Сначала настройте модель ИИ (⚙ Настройка).", settings:"⚙ Настройка",
        base_local:"Сервер на этом же компьютере: можно писать localhost — адрес сам заменится на адрес компьютера. Сервер должен слушать 0.0.0.0 (Ollama: OLLAMA_HOST=0.0.0.0) и быть разрешён в брандмауэре.",
        s_roles:"Модели по ролям (необязательно)", roles_help:"По умолчанию все агенты работают на модели команды. Здесь можно дать роли другую модель того же провайдера, например сильную архитектору и QA, а дешёвую — тимлиду. Пустое поле = модель команды.",
-       team_model:"модель команды", team_key:"ключ команды", own_key:"свой ключ", now:"сейчас"},
+       team_model:"модель команды", team_key:"ключ команды", own_key:"свой ключ", now:"сейчас",
+       demo_btn:"🎲 Пример задания"},
   en: {setup_title:"Setup", setup_lead:"Three steps: the AI model, where to publish the projects and a password. Keys stay on this server.",
        s1:"1. AI model", s1_help:"Pick the provider, paste the key and choose a model. The model must support tool calling.",
        provider:"Provider", api_key:"API key", get_key:"get a key ↗", base_url:"Model server address", model:"Model",
@@ -415,7 +454,8 @@ const T = {
        not_configured:"Set up the AI model first (⚙ Setup).", settings:"⚙ Setup",
        base_local:"A server on this same computer: localhost is fine, it is replaced by the computer's address automatically. The server must listen on 0.0.0.0 (Ollama: OLLAMA_HOST=0.0.0.0) and be allowed in the firewall.",
        s_roles:"Models per role (optional)", roles_help:"By default every agent uses the team's model. Here a role can get another model of the same provider, e.g. a strong one for the architect and QA and a cheap one for the lead. Empty = the team's model.",
-       team_model:"the team's model", team_key:"the team's key", own_key:"own key", now:"now"},
+       team_model:"the team's model", team_key:"the team's key", own_key:"own key", now:"now",
+       demo_btn:"🎲 Example task"},
 };
 let LANG = (localStorage.getItem("lang") || (navigator.language || "en")).toLowerCase().startsWith("ru") ? "ru" : "en";
 let SETUP = null;

@@ -2,6 +2,13 @@
 
 Format: [Keep a Changelog](https://keepachangelog.com/), versions: [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- «🎲 Example task» button next to Send: puts a random tiny project (tip calculator, password generator, to-do list,
+  unit converter, word counter, Pomodoro timer) into the text box — a quick way to try the team and check that the
+  model and the git service work. Nothing is sent until Send.
+
 ## [0.2.3] - 2026-11-23
 
 ### Fixed
