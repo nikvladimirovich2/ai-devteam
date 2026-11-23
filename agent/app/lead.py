@@ -238,6 +238,10 @@ def lead_llm(task_id: str, instruction: str, expected: str) -> str:
                   {"usage": u, "title": expected})
 
 
+# (task_id, role) -> tool calls of the role's last run, as reported by the worker (None = unknown)
+_worker_tools: dict[tuple[str, str], dict[str, int] | None] = {}
+
+
 def call_worker(task_id: str, role: str, title: str, instruction: str, context: str = "",
                 expected: str = "Short report: what was done, which files, how it was checked") -> str:
     check_cancel(task_id)
@@ -255,6 +259,7 @@ def call_worker(task_id: str, role: str, title: str, instruction: str, context: 
                 continue
             r.raise_for_status()
             data = r.json()
+            _worker_tools[(task_id, role)] = data.get("tools")
             if not data.get("ok"):
                 raise RuntimeError(f"{role}: {data.get('output', '')[:1000]}")
             return data.get("output", "")
@@ -289,14 +294,27 @@ def project_snapshot(pdir: pathlib.Path) -> dict[str, tuple[int, int]]:
     return out
 
 
-def require_files(task_id: str, pdir: pathlib.Path, role: str, before: dict[str, tuple[int, int]]) -> None:
-    """Agents' reports are not proof. Fail fast if a role claimed work but neither created nor edited any file."""
+def require_files(task_id: str, pdir: pathlib.Path, role: str, before: dict[str, tuple[int, int]],
+                  roles: tuple[str, ...] = ()) -> None:
+    """Agents' reports are not proof. Fail fast if a role claimed work but neither created nor edited any file.
+
+    `roles`: the workers of this step. If nothing changed but each of them really called tools
+    (read/list/run), the existing code was only verified — e.g. the architect already wrote a tiny
+    program completely. That is not a failure; QA checks the result next.
+    """
     now = project_snapshot(pdir)
     new = sorted(set(now) - set(before))
     edited = sorted(f for f in now if f in before and now[f] != before[f])
     if not new and not edited:
+        used = {r: _worker_tools.get((task_id, r)) for r in roles}
+        if used and all(used.values()):
+            calls = "; ".join(f"{r}: " + ", ".join(f"{k}×{v}" for k, v in sorted(t.items())) for r, t in used.items())
+            lead_say(task_id, "warn", f"🔎 {role}: no file changed — the existing code was only checked ({calls}). "
+                                      f"Continuing, QA verifies the result.")
+            return
+        idle = ", ".join(r for r, t in used.items() if not t) or role
         raise RuntimeError(
-            f"{role} reported success but did not create or change files in the project "
+            f"{idle} reported success but did not create or change files in the project and called no tools "
             f"(files: {len(now)}). The model is most likely not calling tools "
             f"(write_file/run_shell) and only describes the work in text. Check that the model "
             f"supports tool calling (vLLM: --enable-auto-tool-choice --tool-call-parser hermes) "
@@ -639,7 +657,7 @@ def run_pipeline(task_id: str, followup: str = "") -> None:
             for r, f in futs.items():
                 reports[r] = f.result()
         if not followup:
-            require_files(task_id, pdir, "backend/frontend", before)
+            require_files(task_id, pdir, "backend/frontend", before, roles=tuple(dev_jobs))
 
         # ---------------- 4. QA loop
         verdict: dict = {}

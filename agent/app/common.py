@@ -218,11 +218,21 @@ def build_llm(role: str = ROLE) -> LLM:
 # Process-wide (not thread-local): CrewAI may run tools in its own threads,
 # and each worker container handles exactly one job at a time (lock in worker.py).
 _ctx = {"task_id": "", "project_dir": str(WORKSPACE)}
+_tool_calls: dict[str, int] = {}   # tool name -> calls in the current job (the lead's proof of real work)
 
 
 def set_task_context(task_id: str, project_dir: str) -> None:
     _ctx["task_id"] = task_id
     _ctx["project_dir"] = project_dir
+    _tool_calls.clear()
+
+
+def count_tool(name: str) -> None:
+    _tool_calls[name] = _tool_calls.get(name, 0) + 1
+
+
+def tool_calls() -> dict[str, int]:
+    return dict(_tool_calls)
 
 
 def current_task_id() -> str:
@@ -298,6 +308,7 @@ class ListDirTool(BaseTool):
     args_schema: Type[BaseModel] = _PathArg
 
     def _run(self, path: str = ".") -> str:
+        count_tool(self.name)
         base = _safe_path(path)
         if not base.exists():
             return f"(not found: {path})"
@@ -320,6 +331,7 @@ class ReadFileTool(BaseTool):
     args_schema: Type[BaseModel] = _PathArg
 
     def _run(self, path: str = ".") -> str:
+        count_tool(self.name)
         p = _safe_path(path)
         if not p.is_file():
             return f"(file not found: {path})"
@@ -336,6 +348,7 @@ class WriteFileTool(BaseTool):
     args_schema: Type[BaseModel] = _WriteArg
 
     def _run(self, path: str, content: str) -> str:
+        count_tool(self.name)
         p = _safe_path(path)
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(content, encoding="utf-8")
@@ -353,6 +366,7 @@ class ShellTool(BaseTool):
     args_schema: Type[BaseModel] = _ShellArg
 
     def _run(self, command: str) -> str:
+        count_tool(self.name)
         emit("shell", f"$ {command}")
         try:
             r = subprocess.run(

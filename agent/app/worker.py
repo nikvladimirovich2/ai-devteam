@@ -14,7 +14,7 @@ from pydantic import BaseModel
 
 from crewai import Agent, Crew, Process, Task
 
-from common import (ROLE, WORKSPACE, build_llm, emit, env, model_of, require_secret, set_overrides, set_task_context,
+from common import (ROLE, WORKSPACE, build_llm, tool_calls, emit, env, model_of, require_secret, set_overrides, set_task_context,
                     share_with_shell, step_callback, token_ok, ui_lang, workspace_tools)
 from setup_checks import hint
 from roles import COMMON_RULES, ROLES
@@ -253,12 +253,12 @@ def run(req: RunReq):
         result = crew.kickoff()
         text = str(getattr(result, "raw", result))
         emit("done", f"✔ {req.title} ({int(time.time() - t0)}s)\n{text[:4000]}")
-        return {"ok": True, "output": text, "usage": report_usage(req, crew, t0)}
+        return {"ok": True, "output": text, "usage": report_usage(req, crew, t0), "tools": tool_calls()}
     except Exception as e:
         tb = traceback.format_exc()
         h = hint(e, ui_lang())
         emit("error", f"✖ {req.title}: {e}" + (f"\n{h}" if h else "") + f"\n{tb[-2000:]}")
-        return {"ok": False, "output": f"ERROR: {e}",
+        return {"ok": False, "output": f"ERROR: {e}", "tools": tool_calls(),
                 "usage": report_usage(req, locals().get("crew"), locals().get("t0", time.time()))}
     finally:
         _state.update(busy=False, task_id="", since=0.0)
