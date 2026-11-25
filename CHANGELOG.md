@@ -9,6 +9,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versions: [SemVer](http
   placeholders, confirmations, the bulk-delete bar, the stage line and the role names. A RU · EN switch in the header
   changes the language at once (the same setting as in ⚙ Setup). The headings of the plain-text report follow the
   interface language too (the messages of the agents in the feed stay in English).
+- «📋 Templates» next to «🎲 Example task»: five cards (website / landing page, Telegram bot, REST API with a database,
+  internal CRUD tool, browser game or calculator) put a good task description into the text box, in English or
+  Russian, with [placeholders in brackets] to fill in; the first placeholder is selected. Nothing is sent by itself.
 
 ## [0.2.4] - 2026-11-23
 

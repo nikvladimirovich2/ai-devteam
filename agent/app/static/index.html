@@ -86,6 +86,9 @@
   .role .rn { font-weight:600 } .role small { grid-column:2 / 5; color:var(--mute); margin-top:-4px }
   .role .st { grid-column:1 / 5; margin-top:0 }
   details summary { cursor:pointer }
+  .tpls { display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:10px; margin-top:10px }
+  .tpl { border:1px solid var(--line); border-radius:10px; padding:12px; cursor:pointer; background:var(--bg) }
+  .tpl:hover, .tpl:focus { border-color:var(--acc); outline:none } .tpl b { display:block; margin-bottom:4px } .tpl small { color:var(--mute) }
 </style>
 </head>
 <body>
@@ -123,6 +126,7 @@
       <div style="display:flex;flex-direction:column;gap:6px">
         <button id="sendBtn"></button>
         <button type="button" class="sec" id="demoBtn" onclick="demoTask()" data-t="demo_btn"></button>
+        <button type="button" class="sec" id="tplBtn" onclick="openTpl()" data-t="tpl_btn"></button>
         <button type="button" class="sec" id="cancelBtn" onclick="cancelTask()" style="display:none" data-t="stop"></button>
         <button type="button" class="sec" id="ciBtn" onclick="checkCi()" style="display:none" data-tt="ci_title">🔧 CI</button>
         <button type="button" class="sec" id="delBtn" onclick="cur && deleteTask(cur.id)" style="display:none" data-t="delete" data-tt="del_title"></button>
@@ -136,6 +140,13 @@
     <div id="viewer" style="display:none"></div>
   </aside>
 </main>
+<div class="modal" id="tpl" onclick="if (event.target === this) closeTpl()"><div class="card">
+  <div style="display:flex;justify-content:space-between;align-items:center">
+    <h2 data-t="tpl_title"></h2><button class="sec sm" type="button" onclick="closeTpl()">✕</button>
+  </div>
+  <p class="lead" data-t="tpl_lead"></p>
+  <div class="tpls" id="tplList"></div>
+</div></div>
 <div class="modal" id="setup"><div class="card">
   <div style="display:flex;justify-content:space-between;align-items:center">
     <h2 data-t="setup_title"></h2>
@@ -266,7 +277,7 @@ function renderHead() {
   if (!cur) {     // a new task
     $("#title").innerHTML = `<b>${esc(t("new_title"))}</b>`; $("#stage").textContent = t("new_stage");
     $("#cancelBtn").style.display = "none"; $("#delBtn").style.display = "none"; $("#ciBtn").style.display = "none";
-    $("#demoBtn").style.display = "";
+    $("#demoBtn").style.display = ""; $("#tplBtn").style.display = "";
     $("#sendBtn").textContent = t("send_new"); $("#prompt").placeholder = t("ph_new"); $("#gl").innerHTML = "";
     return;
   }
@@ -275,7 +286,7 @@ function renderHead() {
   const running = ["running", "queued"].includes(cur.status);
   $("#cancelBtn").style.display = running ? "" : "none";
   $("#delBtn").style.display = running ? "none" : "";
-  $("#demoBtn").style.display = "none";
+  $("#demoBtn").style.display = "none"; $("#tplBtn").style.display = "none";
   $("#ciBtn").style.display = (!running && cur.gitlab_url) ? "" : "none";
   $("#sendBtn").textContent = t("send_rev");
   $("#sendBtn").disabled = running;
@@ -387,6 +398,112 @@ function demoTask() {
   p.style.height = Math.min(240, p.scrollHeight + 4) + "px";
 }
 
+// ---------------------------------------------------------------- task templates
+// A good task description with [placeholders] the user fills in. Goes into the text box; nothing is sent until "Send".
+const TEMPLATES = [
+  {icon: "🌐",
+   ru: {name: "Сайт / лендинг", hint: "одностраничный сайт продукта или компании, форма заявки",
+        text: "Сделай лендинг для [название продукта или компании] — [одно предложение: что это и для кого].\n" +
+              "Разделы: первый экран с заголовком «[заголовок]» и кнопкой «[текст кнопки]», [3–5 преимуществ], " +
+              "[цены / список услуг], отзывы клиентов, вопросы и ответы, форма заявки (имя, e-mail, сообщение), которая " +
+              "[отправляет письмо на [e-mail] / сохраняет заявки в файл / просто показывает «Спасибо»], подвал с [контакты, ссылки на соцсети].\n" +
+              "Стиль: [цвета, настроение, сайты-примеры]. Язык текстов: [русский].\n" +
+              "Технологии: HTML, CSS и JavaScript без фреймворков, адаптивная вёрстка для телефона, быстрая загрузка, " +
+              "базовые SEO-теги (title, description, Open Graph).\n" +
+              "Добавь Dockerfile (nginx) и README: как запустить."},
+   en: {name: "Website / landing page", hint: "a one-page site for a product or a company, a contact form",
+        text: "Build a landing page for [product or company name] — [one sentence: what it is and who it is for].\n" +
+              "Sections: a hero with the headline \"[headline]\" and a \"[button text]\" button, [3–5 benefits], " +
+              "[pricing / list of services], customer reviews, FAQ, a contact form (name, e-mail, message) that " +
+              "[sends an e-mail to [address] / saves the requests to a file / just shows \"Thank you\"], a footer with [contacts, social links].\n" +
+              "Style: [colors, mood, example sites]. Language of the texts: [English].\n" +
+              "Technology: HTML, CSS and JavaScript without a framework, responsive for phones, fast to load, " +
+              "basic SEO tags (title, description, Open Graph).\n" +
+              "Add a Dockerfile (nginx) and a README: how to run it."}},
+  {icon: "🤖",
+   ru: {name: "Telegram-бот", hint: "бот на Python с командами, базой SQLite и админами",
+        text: "Сделай Telegram-бота на Python (aiogram 3), который [что делает бот, например: принимает заказы для кофейни].\n" +
+              "Команды: /start — [текст приветствия], /help — список команд, [/команда — что делает], [/команда — что делает].\n" +
+              "Данные: хранить [пользователей, заказы, …] в SQLite.\n" +
+              "Администраторы (Telegram ID из настройки ADMIN_IDS) могут [смотреть статистику / делать рассылку / …].\n" +
+              "Токен бота — из переменной окружения BOT_TOKEN (никогда не в коде), файл .env.example со всеми настройками.\n" +
+              "Тесты для логики (без обращения к Telegram), Dockerfile, docker-compose.yml и README: как создать бота у @BotFather и запустить."},
+   en: {name: "Telegram bot", hint: "a Python bot with commands, an SQLite database and admins",
+        text: "Build a Telegram bot in Python (aiogram 3) that [what the bot does, e.g. takes orders for a coffee shop].\n" +
+              "Commands: /start — [greeting text], /help — the list of commands, [/command — what it does], [/command — what it does].\n" +
+              "Data: keep [users, orders, …] in SQLite.\n" +
+              "Admins (Telegram IDs from the ADMIN_IDS setting) can [see statistics / send a broadcast / …].\n" +
+              "The bot token comes from the BOT_TOKEN environment variable (never in the code); a .env.example with all settings.\n" +
+              "Tests for the logic (without calling Telegram), a Dockerfile, docker-compose.yml and a README: how to create the bot with @BotFather and run it."}},
+  {icon: "🗄",
+   ru: {name: "REST API с базой данных", hint: "FastAPI + PostgreSQL, CRUD, фильтры, документация",
+        text: "Сделай REST API для [предметная область, например: библиотека — книги, читатели, выдачи] на Python (FastAPI) " +
+              "с PostgreSQL (SQLAlchemy, миграции Alembic).\n" +
+              "Сущности и поля: [Сущность1: поле, поле, …], [Сущность2: …]; связи: [Сущность2 принадлежит Сущности1].\n" +
+              "Эндпоинты: CRUD для каждой сущности, список с пагинацией, фильтры по [полям] и сортировка по [полю].\n" +
+              "Аутентификация: [нет / API-ключ в заголовке / JWT, вход по e-mail и паролю].\n" +
+              "Проверка входных данных с понятными ошибками 4xx, документация OpenAPI на /docs, проверка /health.\n" +
+              "Тесты на pytest, docker-compose.yml с API и PostgreSQL, README с примерами запросов (curl)."},
+   en: {name: "REST API with a database", hint: "FastAPI + PostgreSQL, CRUD, filters, API docs",
+        text: "Build a REST API for [domain, e.g. a library: books, readers, loans] in Python (FastAPI) " +
+              "with PostgreSQL (SQLAlchemy, Alembic migrations).\n" +
+              "Entities and fields: [Entity1: field, field, …], [Entity2: …]; relations: [Entity2 belongs to Entity1].\n" +
+              "Endpoints: CRUD for every entity, lists with pagination, filters by [fields] and sorting by [field].\n" +
+              "Authentication: [none / an API key in a header / JWT, login with e-mail and password].\n" +
+              "Input validation with clear 4xx errors, OpenAPI docs at /docs, a /health check.\n" +
+              "Tests with pytest, docker-compose.yml with the API and PostgreSQL, a README with request examples (curl)."}},
+  {icon: "🧰",
+   ru: {name: "Внутренний инструмент (CRUD-админка)", hint: "таблица записей с поиском, формой и выгрузкой в CSV",
+        text: "Сделай внутренний веб-инструмент для [команда / отдел], чтобы вести [что: например, учёт техники офиса].\n" +
+              "У записи поля: [название, тип, ответственный, статус (в работе / в ремонте / списано), дата, комментарий].\n" +
+              "Страницы: таблица с поиском, фильтрами по [статусу, ответственному] и сортировкой; форма добавления и " +
+              "редактирования; удаление с подтверждением; выгрузка в CSV.\n" +
+              "Доступ: [один общий логин и пароль из настроек / без входа, работает во внутренней сети].\n" +
+              "Стек: Python (FastAPI) + SQLite + простой фронтенд на HTML/JS без сборки.\n" +
+              "Тесты для API, Dockerfile и README; файл базы хранится в томе (volume)."},
+   en: {name: "Internal tool (CRUD admin page)", hint: "a table of records with search, a form and CSV export",
+        text: "Build an internal web tool for [team / department] to keep track of [what, e.g. the office equipment].\n" +
+              "A record has the fields: [name, type, owner, status (in use / in repair / written off), date, comment].\n" +
+              "Pages: a table with search, filters by [status, owner] and sorting; a form to add and edit a record; " +
+              "delete with a confirmation; export to CSV.\n" +
+              "Access: [one shared login and password from the settings / no login, it runs in the internal network].\n" +
+              "Stack: Python (FastAPI) + SQLite + a simple HTML/JS frontend without a build step.\n" +
+              "Tests for the API, a Dockerfile and a README; the database file is kept in a volume."}},
+  {icon: "🎮",
+   ru: {name: "Браузерная игра или калькулятор", hint: "одна страница без сервера: игра, калькулятор, конвертер",
+        text: "Сделай одностраничную [игру / калькулятор]: [название, например «Змейка» / ипотечный калькулятор] " +
+              "на HTML, CSS и JavaScript (без сервера и фреймворков).\n" +
+              "Правила / формулы: [как это работает: что вводит или делает пользователь и что он видит].\n" +
+              "Управление: [стрелки на клавиатуре / кнопки / касания на телефоне]. Показывать [счёт / результат / таблицу], " +
+              "хранить [лучший счёт / последние введённые значения] в localStorage.\n" +
+              "Оформление: [стиль, цвета]; работает и на телефоне, и на компьютере.\n" +
+              "Логика — в отдельном модуле с модульными тестами, короткий README."},
+   en: {name: "Browser game or calculator", hint: "one page without a server: a game, a calculator, a converter",
+        text: "Build a one-page [game / calculator]: [name, e.g. \"Snake\" / a mortgage calculator] " +
+              "in HTML, CSS and JavaScript (no server, no framework).\n" +
+              "Rules / formulas: [how it works: what the user enters or does and what they see].\n" +
+              "Controls: [keyboard arrows / buttons / touch on a phone]. Show [the score / the result / a table], " +
+              "keep [the best score / the last inputs] in localStorage.\n" +
+              "Design: [style, colors]; works on a phone and on a computer.\n" +
+              "The logic in a separate module with unit tests, a short README."}},
+];
+function openTpl() {
+  $("#tplList").innerHTML = TEMPLATES.map((x, i) => { const v = x[LANG] || x.en;
+    return `<div class="tpl" role="button" tabindex="0" onclick="useTpl(${i})" onkeydown="if (event.key === 'Enter') useTpl(${i})">
+      <b>${x.icon} ${esc(v.name)}</b><small>${esc(v.hint)}</small></div>`; }).join("");
+  $("#tpl").classList.add("open");
+}
+function closeTpl() { $("#tpl").classList.remove("open"); }
+function useTpl(i) {
+  const v = TEMPLATES[i][LANG] || TEMPLATES[i].en, p = $("#prompt");
+  if (p.value.trim() && p.value !== v.text && !confirm(t("tpl_replace"))) return;
+  closeTpl();
+  p.value = v.text; p.focus();
+  const a = v.text.indexOf("["), b = v.text.indexOf("]", a);
+  if (a >= 0 && b > a) p.setSelectionRange(a, b + 1); else p.setSelectionRange(0, 0);   // the first [placeholder]
+  p.scrollTop = 0; p.style.height = Math.min(240, p.scrollHeight + 4) + "px";
+}
+
 async function checkCi() {
   if (!cur) return;
   try { await api(`/api/tasks/${cur.id}/ci`, {method: "POST"}); await loadTasks(); renderHead(); }
@@ -442,7 +559,9 @@ const T = {
        base_local:"Сервер на этом же компьютере: можно писать localhost — адрес сам заменится на адрес компьютера. Сервер должен слушать 0.0.0.0 (Ollama: OLLAMA_HOST=0.0.0.0) и быть разрешён в брандмауэре.",
        s_roles:"Модели по ролям (необязательно)", roles_help:"По умолчанию все агенты работают на модели команды. Здесь можно дать роли другую модель того же провайдера, например сильную архитектору и QA, а дешёвую — тимлиду. Пустое поле = модель команды.",
        team_model:"модель команды", team_key:"ключ команды", own_key:"свой ключ", now:"сейчас",
-       demo_btn:"🎲 Пример задания",
+       demo_btn:"🎲 Пример задания", tpl_btn:"📋 Шаблоны", tpl_title:"Шаблоны заданий",
+       tpl_lead:"Выберите тип проекта: в поле появится готовое описание. Замените всё, что в [квадратных скобках], своими данными и нажмите «Отправить тимлиду». Само ничего не отправляется.",
+       tpl_replace:"Заменить текст в поле шаблоном?",
        // main screen
        tasks:"Задачи", sel_title:"Выбрать несколько задач для удаления", new_btn:"+ Новая", sel_all:"выбрать все",
        sel_clear:"снять выбор", sel_failed:"выбрать неудачные", del_sel:"удалить выбранные", sel_done:"готово",
@@ -481,7 +600,9 @@ const T = {
        base_local:"A server on this same computer: localhost is fine, it is replaced by the computer's address automatically. The server must listen on 0.0.0.0 (Ollama: OLLAMA_HOST=0.0.0.0) and be allowed in the firewall.",
        s_roles:"Models per role (optional)", roles_help:"By default every agent uses the team's model. Here a role can get another model of the same provider, e.g. a strong one for the architect and QA and a cheap one for the lead. Empty = the team's model.",
        team_model:"the team's model", team_key:"the team's key", own_key:"own key", now:"now",
-       demo_btn:"🎲 Example task",
+       demo_btn:"🎲 Example task", tpl_btn:"📋 Templates", tpl_title:"Task templates",
+       tpl_lead:"Pick the kind of project: a ready description goes into the text box. Replace everything in [square brackets] with your details and press «Send to Team Lead». Nothing is sent by itself.",
+       tpl_replace:"Replace the text in the box with the template?",
        // main screen
        tasks:"Tasks", sel_title:"Select several tasks to delete", new_btn:"+ New", sel_all:"select all",
        sel_clear:"clear", sel_failed:"select failed", del_sel:"delete selected", sel_done:"done",
@@ -517,6 +638,7 @@ function applyLang() {
   if (SETUP) renderRoles();
   // the main screen
   renderTeam(); renderTasks(); renderHead(); rerender();
+  if ($("#tpl").classList.contains("open")) openTpl();
 }
 function setLang(l) { LANG = l; localStorage.setItem("lang", l); applyLang(); post("/api/setup/ui", {lang: l}).catch(() => {}); }
 async function post(p, body) { return api(p, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)}); }

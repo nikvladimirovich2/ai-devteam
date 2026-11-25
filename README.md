@@ -186,6 +186,10 @@ Repository name: url-shortener.
 Then, as a revision: *«Add optional ttl_days (1–365) to POST /api/links; an expired link returns 410 Gone
 on /r/{code} and does not count a click. Add tests.»*
 
+No idea what to ask for? In the web interface, **🎲 Example task** puts a random tiny project into the text box and
+**📋 Templates** offers five ready descriptions (website / landing page, Telegram bot, REST API with a database,
+internal CRUD tool, browser game or calculator) — replace the `[placeholders]` with your details and send.
+
 ## Security
 
 - Each container receives **only its own** API key; `GIT_TOKEN` exists only in `devops`.
