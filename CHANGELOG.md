@@ -12,6 +12,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versions: [SemVer](http
 - «📋 Templates» next to «🎲 Example task»: five cards (website / landing page, Telegram bot, REST API with a database,
   internal CRUD tool, browser game or calculator) put a good task description into the text box, in English or
   Russian, with [placeholders in brackets] to fill in; the first placeholder is selected. Nothing is sent by itself.
+- Cost budget per task run: `TASK_BUDGET_USD` / `TASK_BUDGET_TOKENS` (or ⚙ Setup → Limits; empty = no limit). Every
+  step's tokens are priced with LiteLLM's table (local / unknown models = $0, their tokens still count). When the
+  budget is used up, the lead stops the team before the next step with the status «budget used up» and a final
+  message with the amount spent and the repository link. The task header shows «💸 $… · N tokens», the report has a
+  Cost line and a cost column per role. Checked between steps: the last step may go a little over the limit.
 
 ## [0.2.4] - 2026-11-23
 

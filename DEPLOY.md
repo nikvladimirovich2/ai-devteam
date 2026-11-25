@@ -81,6 +81,18 @@ Recommended:
 | `UI_USER`, `UI_PASSWORD` | Basic Auth for the web UI |
 | `ARCHITECT_MODEL`, `BACKEND_MODEL`, … | a different model per role — see [MODELS.md](MODELS.md) |
 
+Limits of a task run (optional; also in ⚙ Setup → *Limits*, values in `.env` win):
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `TASK_BUDGET_USD` | empty = no limit | max cost of one run (a new task or a revision), US dollars. Prices from LiteLLM's table; local / unknown models count as $0 |
+| `TASK_BUDGET_TOKENS` | empty = no limit | max tokens of one run (counts for every model, also local ones) |
+
+When a limit is used up, the lead stops the team before the next step (status «budget used up») and writes a final
+message with the amount spent and the repository link. The check runs between the agents' steps, so the last step may
+go a little over the limit. The cost of every step, the total in the report and «💸 spent» in the task header are
+shown also without a limit.
+
 > **`$` in values.** Compose expands `$VAR` inside `.env`. A key containing `$` must be in single quotes:
 > `QA_API_KEY='$abc#def'`, otherwise part of it is silently dropped.
 

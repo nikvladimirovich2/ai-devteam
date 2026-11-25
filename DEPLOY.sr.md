@@ -81,6 +81,17 @@ Preporučeno:
 | `UI_USER`, `UI_PASSWORD` | Basic Auth za web UI |
 | `ARCHITECT_MODEL`, `BACKEND_MODEL`, … | drugačiji model za svaku ulogu — pogledajte [MODELS.md](MODELS.md) |
 
+Ograničenja jednog pokretanja zadatka (opciono; isto u `⚙ Setup` → *Limits*, vrednosti iz `.env` imaju prednost):
+
+| Promenljiva | Podrazumevano | Značenje |
+|---|---|---|
+| `TASK_BUDGET_USD` | prazno = bez ograničenja | najveća cena jednog pokretanja (novi zadatak ili dorada), u američkim dolarima. Cene iz LiteLLM tabele; lokalni i nepoznati modeli se računaju kao $0 |
+| `TASK_BUDGET_TOKENS` | prazno = bez ograničenja | najviše tokena jednog pokretanja (broje se za svaki model, i za lokalne) |
+
+Kada se ograničenje potroši, vođa tima zaustavlja tim pre sledećeg koraka (status «budget used up») i piše završnu
+poruku sa potrošenim iznosom i linkom ka repozitorijumu. Provera se radi između koraka agenata, pa poslednji korak može
+malo da pređe ograničenje. Cena svakog koraka, ukupan iznos u izveštaju i «💸» u zaglavlju zadatka vide se i bez ograničenja.
+
 > **`$` u vrednostima.** Compose razvija `$VAR` unutar `.env`. Ključ koji sadrži `$` mora biti u jednostrukim navodnicima:
 > `QA_API_KEY='$abc#def'`, inače se deo ključa tiho odbacuje.
 

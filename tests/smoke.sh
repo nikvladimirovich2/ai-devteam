@@ -72,6 +72,23 @@ grep -q "QA: passed" <<<"$report" || fail "QA did not pass"
 grep -q "backend/test_app.py" <<<"$report" || fail "backend file missing"
 grep -E "^ +Architect .*hosted_vllm/mock-architect$" <<<"$report" >/dev/null || fail "report: architect model"
 grep -E "^ +Backend .*hosted_vllm/mock$" <<<"$report" >/dev/null || fail "report: backend model"
+[[ $(curl -fs "$B/api/tasks/$TID" | json 'd["tokens"] > 0') == True ]] || fail "no tokens counted for the task"
+
+echo "== budget: a run stops cleanly when the limit is used up"
+r=$(post /api/setup/limits '{"budget_tokens":"1"}')
+echo "limits: $r"
+[[ $(json 'd["budget_tokens"]' <<<"$r") == 1 ]] || fail "limits not saved"
+BID=$(post /api/tasks '{"prompt":"Budget smoke test"}' | json 'd["id"]')
+bstatus=""
+for i in $(seq 1 36); do
+  bstatus=$(curl -fs "$B/api/tasks/$BID" | json 'd["status"]')
+  case "$bstatus" in running|queued) sleep 5 ;; *) break ;; esac
+done
+curl -fs "$B/api/tasks/$BID/report" | json 'd["report"]'
+[[ "$bstatus" == budget ]] || fail "budget task status $bstatus (expected budget)"
+curl -fs "$B/api/tasks/$BID" | json 'd["result"]' | grep -q "💸" || fail "no budget message in the result"
+post /api/setup/limits '{}' >/dev/null
+[[ $(curl -fs "$B/api/setup" | json 'd["limits"]["budget_tokens"]') == 0 ]] || fail "limits not cleared"
 
 echo "== isolation of the agents"
 # the shell user of the agents cannot read the agent's environment, nor the devops Git store

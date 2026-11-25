@@ -26,7 +26,7 @@
   .t .meta { color:var(--mute); font-size:12px }
   .badge { display:inline-block; padding:0 6px; border-radius:8px; font-size:11px; border:1px solid var(--line) }
   .s-running,.s-queued { color:var(--warn) } .s-done { color:var(--ok) } .s-failed,.s-cancelled,.s-interrupted { color:var(--bad) }
-  .s-done_no_push { color:var(--warn) } .s-ci_failed { color:var(--bad) }
+  .s-done_no_push { color:var(--warn) } .s-ci_failed, .s-budget { color:var(--bad) }
   .ev.k-ci { border-left-color:var(--warn) }
   #center { display:grid; grid-template-rows:auto 1fr auto; min-height:0 }
   #head { padding:10px 16px; border-bottom:1px solid var(--line) }
@@ -195,6 +195,14 @@
     <div class="st" id="s3st"></div>
   </div>
 
+  <div class="step"><h3><span data-t="s_limits"></span> <span class="done" id="d4"></span></h3>
+    <p class="lead" data-t="limits_help"></p>
+    <label data-t="budget_usd"></label><input id="lUsd" inputmode="decimal" data-tp="no_limit">
+    <label data-t="budget_tokens"></label><input id="lTok" inputmode="numeric" data-tp="no_limit">
+    <div class="row"><button class="sec" type="button" onclick="saveLimits()" data-t="save"></button></div>
+    <div class="st" id="s4st"></div>
+  </div>
+
   <div class="row" style="justify-content:flex-end;margin-top:18px">
     <button class="sec" type="button" onclick="closeSetup()" data-t="close"></button>
   </div>
@@ -209,6 +217,8 @@ let cur = null, es = null, events = [], TEAM = null;
 const $ = s => document.querySelector(s);
 const esc = s => (s ?? "").toString().replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const fmtT = ts => new Date(ts * 1000).toLocaleTimeString();
+const fmtN = n => Math.round(n || 0).toLocaleString("en").replace(/,/g, " ");
+const usd = v => "$" + ((v = +v || 0) > 0 && v < 0.01 ? v.toFixed(4) : v.toFixed(2));
 async function api(p, opt) { const r = await fetch(p, opt); if (!r.ok) throw new Error(await r.text()); return r.json(); }
 
 async function loadTeam() {
@@ -239,7 +249,7 @@ function renderTasks() {
 }
 
 let TASKS = [], PICK = new Set();
-const FAILED = ["failed", "cancelled", "interrupted", "done_no_push", "ci_failed"];
+const FAILED = ["failed", "cancelled", "interrupted", "done_no_push", "ci_failed", "budget"];
 function taskClick(ev, id) {
   if (document.body.classList.contains("selmode")) {
     const t = TASKS.find(x => x.id === id);
@@ -282,7 +292,8 @@ function renderHead() {
     return;
   }
   $("#title").innerHTML = `<b>${esc(cur.title)}</b> <span class="badge s-${cur.status}">${esc(stName(cur.status))}</span>`;
-  $("#stage").textContent = `${t("stage_lbl")}: ${cur.stage || "-"}   ·   ${cur.project_name || ""}   ·   ${cur.id}`;
+  $("#stage").textContent = `${t("stage_lbl")}: ${cur.stage || "-"}   ·   ${cur.project_name || ""}   ·   ${cur.id}`
+                            + (cur.tokens ? `   ·   💸 ${usd(cur.cost)} · ${fmtN(cur.tokens)} ${t("tokens")}` : "");
   const running = ["running", "queued"].includes(cur.status);
   $("#cancelBtn").style.display = running ? "" : "none";
   $("#delBtn").style.display = running ? "none" : "";
@@ -582,7 +593,11 @@ const T = {
        copy:"📋 копировать", copy_na:"Копирование недоступно (нужен https или localhost)",
        r_lead:"Тимлид", r_architect:"Архитектор", r_backend:"Бэкенд", r_frontend:"Фронтенд", r_qa:"QA", r_devops:"DevOps", r_user:"Вы",
        st_queued:"в очереди", st_running:"выполняется", st_done:"готово", st_done_no_push:"готово (без публикации)",
-       st_ci_failed:"CI не прошёл", st_failed:"ошибка", st_cancelled:"остановлена", st_interrupted:"прервана"},
+       st_ci_failed:"CI не прошёл", st_failed:"ошибка", st_cancelled:"остановлена", st_interrupted:"прервана",
+       st_budget:"бюджет исчерпан", tokens:"токенов", saved:"Сохранено",
+       s_limits:"4. Ограничения (необязательно)",
+       limits_help:"Сколько может стоить один запуск задачи (новая задача или доработка). Когда лимит исчерпан, тимлид останавливает команду и пишет итог со ссылкой на репозиторий. Цены — из таблицы LiteLLM; локальные модели и модели с неизвестной ценой считаются бесплатными, но их токены учитываются. Лимит проверяется между шагами агентов, поэтому последний шаг может немного его превысить. Пусто = без ограничений.",
+       budget_usd:"Бюджет на запуск, долларов США", budget_tokens:"Бюджет на запуск, токенов", no_limit:"без ограничений"},
   en: {setup_title:"Setup", setup_lead:"Three steps: the AI model, where to publish the projects and a password. Keys stay on this server.",
        s1:"1. AI model", s1_help:"Pick the provider, paste the key and choose a model. The model must support tool calling.",
        provider:"Provider", api_key:"API key", get_key:"get a key ↗", base_url:"Model server address", model:"Model",
@@ -623,7 +638,11 @@ const T = {
        copy:"📋 copy", copy_na:"Copying is not available (needs https/localhost)",
        r_lead:"Team Lead", r_architect:"Architect", r_backend:"Backend", r_frontend:"Frontend", r_qa:"QA", r_devops:"DevOps", r_user:"You",
        st_queued:"queued", st_running:"running", st_done:"done", st_done_no_push:"done (no push)",
-       st_ci_failed:"CI failed", st_failed:"failed", st_cancelled:"cancelled", st_interrupted:"interrupted"},
+       st_ci_failed:"CI failed", st_failed:"failed", st_cancelled:"cancelled", st_interrupted:"interrupted",
+       st_budget:"budget used up", tokens:"tokens", saved:"Saved",
+       s_limits:"4. Limits (optional)",
+       limits_help:"How much one run of a task (a new task or a revision) may cost. When the limit is used up, the Team Lead stops the team and writes a final message with the repository link. Prices come from LiteLLM's table; local models and models without a known price count as free, but their tokens still count. The limit is checked between the agents' steps, so the last step may go a little over it. Empty = no limit.",
+       budget_usd:"Budget per run, US dollars", budget_tokens:"Budget per run, tokens", no_limit:"no limit"},
 };
 let LANG = (localStorage.getItem("lang") || (navigator.language || "en")).toLowerCase().startsWith("ru") ? "ru" : "en";
 let SETUP = null;
@@ -633,6 +652,7 @@ function applyLang() {
   document.documentElement.lang = LANG;
   document.querySelectorAll("[data-t]").forEach(el => el.textContent = t(el.dataset.t));
   document.querySelectorAll("[data-tt]").forEach(el => el.title = t(el.dataset.tt));
+  document.querySelectorAll("[data-tp]").forEach(el => el.placeholder = t(el.dataset.tp));
   $("#sLang").value = LANG; $("#setupBtn").textContent = t("settings"); gitChanged(true);
   $("#langBtn").innerHTML = LANG === "ru" ? "<b>RU</b> · EN" : "RU · <b>EN</b>";
   if (SETUP) renderRoles();
@@ -663,6 +683,7 @@ async function openSetup() {
   $("#d2").textContent = g.configured ? t("ready") + (g.from_env ? " · " + t("from_env") : "") : "";
   $("#d3").textContent = SETUP.ui.password_set ? t("ready") + (SETUP.ui.from_env ? " · " + t("from_env") : "") : "";
   if (SETUP.ui.user) $("#uUser").value = SETUP.ui.user;
+  fillLimits();
   renderRoles();
   applyLang(); $("#setup").classList.add("open");
 }
@@ -719,6 +740,18 @@ async function saveGit() {
     if (r.ok) { status("#s2st", "ok", r.message, r.detail); $("#d2").textContent = t("ready"); $("#gToken").value = ""; }
     else status("#s2st", "bad", r.message, r.detail);
   } catch (e) { status("#s2st", "bad", e.message); }
+}
+function fillLimits() {
+  const L = SETUP.limits || {}, E = L.from_env || {};
+  $("#lUsd").value = L.budget_usd || ""; $("#lTok").value = L.budget_tokens || "";
+  $("#lUsd").disabled = !!E.budget_usd; $("#lTok").disabled = !!E.budget_tokens;
+  const set = L.budget_usd || L.budget_tokens;
+  $("#d4").textContent = set ? t("ready") + (E.budget_usd || E.budget_tokens ? " · " + t("from_env") : "") : "";
+}
+async function saveLimits() {
+  try { SETUP.limits = await post("/api/setup/limits", {budget_usd: $("#lUsd").value, budget_tokens: $("#lTok").value});
+        fillLimits(); status("#s4st", "ok", t("saved")); }
+  catch (e) { status("#s4st", "bad", e.message); }
 }
 async function saveUI() {
   const pw = $("#uPass").value;

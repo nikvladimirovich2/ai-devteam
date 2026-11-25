@@ -33,6 +33,7 @@ from crewai import Agent, Crew, Process, Task
 
 from common import (WORKSPACE, build_llm, env, env_bool, extract_json, model_of, internal_headers, require_secret, set_overrides,
                     token_ok, ui_lang)
+import budget
 import setup_checks
 from roles import ROLES
 
@@ -153,8 +154,13 @@ def role_settings(role: str) -> dict[str, str]:
     return {f"{p}_MODEL": setting(f"role_model_{role}"), f"{p}_API_KEY": setting(f"role_key_{role}")}
 
 
+def limit_settings() -> dict[str, str]:
+    """Limits of a task run from the wizard (⚙ Setup → Limits); .env wins over them."""
+    return {"TASK_BUDGET_USD": setting("task_budget_usd"), "TASK_BUDGET_TOKENS": setting("task_budget_tokens")}
+
+
 def apply_settings() -> None:
-    values = model_settings()
+    values = {**model_settings(), **limit_settings()}
     for r in TEAM_ROLES:
         values.update(role_settings(r))     # the lead reports every role's model; it uses only its own key
     set_overrides({k: v for k, v in values.items() if v})
@@ -178,6 +184,16 @@ def q(sql: str, args: tuple = ()) -> list[dict]:
 
 
 def add_event(task_id: str, role: str, kind: str, message: str, extra: dict | None = None) -> None:
+    if kind == "usage" and isinstance((extra or {}).get("usage"), dict):
+        # the price of the tokens (LiteLLM's table; unknown / self-hosted models = $0) for the budget and the report
+        u = extra["usage"]
+        try:
+            u["cost"] = budget.cost_of(str(u.get("model") or ""), int(u.get("prompt_tokens") or 0),
+                                       int(u.get("completion_tokens") or 0))
+        except Exception:  # noqa: BLE001
+            u["cost"] = 0.0
+        if u["cost"] > 0:
+            message += f" · {budget.fmt_usd(u['cost'])}"
     q("INSERT INTO events(task_id, ts, role, kind, message, extra) VALUES (?,?,?,?,?,?)",
       (task_id, time.time(), role, kind, message, json.dumps(extra or {}, ensure_ascii=False)))
 
@@ -205,9 +221,43 @@ class Cancelled(Exception):
     pass
 
 
+class BudgetExceeded(Exception):
+    """The run used up TASK_BUDGET_USD / TASK_BUDGET_TOKENS."""
+
+    def __init__(self, which: str, spent: dict):
+        super().__init__(f"budget used up ({which})")
+        self.which, self.spent = which, spent
+
+
+# task_id -> id of the last event before the current run (a new task or a revision): the budget is per run
+_run_since: dict[str, int] = {}
+
+
+def budget_limits() -> tuple[float, float]:
+    return budget.parse_limit(env("TASK_BUDGET_USD")), budget.parse_limit(env("TASK_BUDGET_TOKENS"))
+
+
+def spent(task_id: str, since: int = 0) -> dict:
+    """Tokens and USD of the task's usage events after event [since] (0 = the whole task)."""
+    rows = q("SELECT extra FROM events WHERE task_id=? AND kind='usage' AND id>?", (task_id, since))
+    return budget.totals(json.loads(r["extra"] or "{}").get("usage", {}) for r in rows)
+
+
+def check_budget(task_id: str) -> None:
+    max_usd, max_tokens = budget_limits()
+    if not max_usd and not max_tokens:
+        return
+    s = spent(task_id, _run_since.get(task_id, 0))
+    which = budget.exceeded(s, max_usd, max_tokens)
+    if which:
+        raise BudgetExceeded(which, s)
+
+
 def check_cancel(task_id: str) -> None:
+    """Between the steps: Stop pressed, or the budget is used up."""
     if task_id in _cancel:
         raise Cancelled()
+    check_budget(task_id)
 
 
 def lead_say(task_id: str, kind: str, msg: str, **extra: Any) -> None:
@@ -216,6 +266,7 @@ def lead_say(task_id: str, kind: str, msg: str, **extra: Any) -> None:
 
 def lead_llm(task_id: str, instruction: str, expected: str) -> str:
     """The Team Lead thinks with its OWN key (LEAD_API_KEY)."""
+    check_cancel(task_id)
     spec = ROLES["lead"]
     agent = Agent(role=spec["role"], goal=spec["goal"], backstory=spec["backstory"],
                   llm=build_llm("lead"), tools=[], allow_delegation=False, max_iter=5, verbose=True)
@@ -261,7 +312,9 @@ def call_worker(task_id: str, role: str, title: str, instruction: str, context: 
             data = r.json()
             _worker_tools[(task_id, role)] = data.get("tools")
             if not data.get("ok"):
+                check_cancel(task_id)          # a failed step because of Stop / budget is not an error
                 raise RuntimeError(f"{role}: {data.get('output', '')[:1000]}")
+            check_cancel(task_id)
             return data.get("output", "")
         except httpx.TransportError as e:
             lead_say(task_id, "warn", f"{role} unavailable ({e}), retrying {attempt + 1}/3")
@@ -327,6 +380,33 @@ def require_files(task_id: str, pdir: pathlib.Path, role: str, before: dict[str,
     lead_say(task_id, "check", f"🔎 {role}: " + "; ".join(parts))
 
 
+def _pushed_url(task_id: str) -> str:
+    """Repository link of the last real push (the publish tool's own event, never the agent's text)."""
+    rows = q("SELECT extra FROM events WHERE task_id=? AND role='devops' AND kind='gitlab' "
+             "AND message LIKE '✅%' ORDER BY id DESC LIMIT 1", (task_id,))
+    return json.loads(rows[0]["extra"] or "{}").get("web_url", "") if rows else ""
+
+
+def stop_for_budget(task_id: str, b: BudgetExceeded) -> None:
+    """The budget is used up: stop cleanly, with a final message (no more model calls)."""
+    url = _pushed_url(task_id) or get_task(task_id)["gitlab_url"] or ""
+    max_usd, max_tokens = budget_limits()
+    lang = ui_lang()
+    desc = budget.describe(b.spent, max_usd, max_tokens, lang)
+    if lang == "ru":
+        msg = (f"💸 Бюджет задачи исчерпан: потрачено {desc}. Команда остановлена, следующий шаг не запускался.\n"
+               f"Репозиторий: {url or 'не опубликован'}\n"
+               "Лимит меняется в ⚙ Настройка → Ограничения (или TASK_BUDGET_USD / TASK_BUDGET_TOKENS в .env); "
+               "после этого можно отправить доработку — команда продолжит с текущего кода.")
+    else:
+        msg = (f"💸 The task budget is used up: spent {desc}. The team stopped; the next step was not started.\n"
+               f"Repository: {url or 'not published'}\n"
+               "Change the limit in ⚙ Setup → Limits (or TASK_BUDGET_USD / TASK_BUDGET_TOKENS in .env), then send a "
+               "revision — the team continues from the current code.")
+    update_task(task_id, status="budget", stage="budget used up", gitlab_url=url, result=msg)
+    lead_say(task_id, "final", msg, gitlab_url=url, spent=b.spent, which=b.which)
+
+
 def _last_pushed_sha(task_id: str) -> str:
     rows = q("SELECT extra FROM events WHERE task_id=? AND role='devops' AND kind='gitlab' "
              "AND message LIKE '✅%' ORDER BY id DESC LIMIT 1", (task_id,))
@@ -353,7 +433,8 @@ REPORT_T = {
            "done": "DONE:", "no_stages": "(no completed stages)", "tests": "TESTS:",
            "runs": "Test runs: {n} (last 8):", "no_tests": "(no tests were run)", "not_checked": "(not checked)",
            "errors": "ERRORS", "files": "FILES IN PROJECT", "tokens": "TOKENS:",
-           "cols": ("role", "calls", "requests", "input", "output", "total", "model"), "total": "TOTAL",
+           "cols": ("role", "calls", "requests", "input", "output", "total", "model", "cost"), "total": "TOTAL",
+           "cost": "Cost", "budget_used": "budget used up",
            "whole": "Whole task (all runs incl. revisions): {n} tokens",
            "no_usage": "(the provider did not return token counts)", "st": {}},
     "ru": {"report": "ОТЧЁТ", "status": "Статус", "duration": "Длительность", "repo": "Репозиторий",
@@ -361,11 +442,13 @@ REPORT_T = {
            "done": "СДЕЛАНО:", "no_stages": "(нет завершённых этапов)", "tests": "ТЕСТЫ:",
            "runs": "Запусков тестов: {n} (последние 8):", "no_tests": "(тесты не запускались)", "not_checked": "(не проверялся)",
            "errors": "ОШИБКИ", "files": "ФАЙЛОВ В ПРОЕКТЕ", "tokens": "ТОКЕНЫ:",
-           "cols": ("роль", "вызовы", "запросы", "вход", "выход", "всего", "модель"), "total": "ИТОГО",
+           "cols": ("роль", "вызовы", "запросы", "вход", "выход", "всего", "модель", "цена"), "total": "ИТОГО",
+           "cost": "Стоимость", "budget_used": "бюджет исчерпан",
            "whole": "Вся задача (все запуски, включая доработки): {n} токенов",
            "no_usage": "(провайдер не вернул число токенов)",
            "st": {"queued": "в очереди", "running": "выполняется", "done": "готово", "done_no_push": "готово (без публикации)",
-                  "ci_failed": "CI не прошёл", "failed": "ошибка", "cancelled": "остановлена", "interrupted": "прервана"}},
+                  "ci_failed": "CI не прошёл", "failed": "ошибка", "cancelled": "остановлена", "interrupted": "прервана",
+                  "budget": "бюджет исчерпан"}},
 }
 
 
@@ -386,14 +469,16 @@ def build_report(task_id: str, since_event: int = 0) -> str:
             continue
         u = e["extra"].get("usage", {})
         r = per.setdefault(e["role"], {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0,
-                                       "total_tokens": 0, "successful_requests": 0, "seconds": 0, "models": []})
+                                       "total_tokens": 0, "successful_requests": 0, "seconds": 0, "models": [],
+                                       "cost": 0.0})
         r["calls"] += 1
+        r["cost"] += float(u.get("cost") or 0)
         if u.get("model") and u["model"] not in r["models"]:
             r["models"].append(u["model"])
         for k in ("prompt_tokens", "completion_tokens", "total_tokens", "successful_requests", "seconds"):
             r[k] += int(u.get(k) or 0)
     tot = {k: sum(r[k] for r in per.values()) for k in ("prompt_tokens", "completion_tokens", "total_tokens",
-                                                       "successful_requests", "calls")}
+                                                       "successful_requests", "calls", "cost")}
 
     # stages
     stages = [e["message"].split("\n")[0].lstrip("✔ ").strip() for e in ev if e["kind"] == "done"]
@@ -438,6 +523,10 @@ def build_report(task_id: str, since_event: int = 0) -> str:
     if pushes:
         L.append(f"{H['commits'] + ':':<14}" + H["commits_v"].format(n=len(pushes), sha=pushes[-1].get('commit', '')[:10],
                                                                     branch=pushes[-1].get('branch', '')))
+    max_usd, max_tokens = budget_limits()
+    L.append(f"{H['cost'] + ':':<14}" + budget.describe({"tokens": tot["total_tokens"], "cost": tot["cost"]},
+                                                         max_usd, max_tokens, ui_lang())
+             + (f"  ({H['budget_used']})" if st == "budget" else ""))
     L.append("")
     L.append(H["done"])
     for s_ in stages:
@@ -475,16 +564,17 @@ def build_report(task_id: str, since_event: int = 0) -> str:
     L.append("")
     L.append(H["tokens"])
     c = H["cols"]
-    L.append(f"  {c[0]:<11}{c[1]:>7}{c[2]:>10}{c[3]:>13}{c[4]:>12}{c[5]:>13}   {c[6]}")
+    L.append(f"  {c[0]:<11}{c[1]:>7}{c[2]:>10}{c[3]:>13}{c[4]:>12}{c[5]:>13}{c[7]:>11}   {c[6]}")
     for role in ("lead", "architect", "backend", "frontend", "qa", "devops"):
         if role in per:
             r = per[role]
             L.append(f"  {ROLE_TITLES[role]:<11}{r['calls']:>7}{r['successful_requests']:>10}"
                      f"{_fmt(r['prompt_tokens']):>13}{_fmt(r['completion_tokens']):>12}{_fmt(r['total_tokens']):>13}"
-                     f"   {', '.join(r['models']) or '-'}")
-    L.append(f"  {'-' * 64}")
+                     f"{budget.fmt_usd(r['cost']):>11}   {', '.join(r['models']) or '-'}")
+    L.append(f"  {'-' * 75}")
     L.append(f"  {H['total']:<11}{tot['calls']:>7}{tot['successful_requests']:>10}"
-             f"{_fmt(tot['prompt_tokens']):>13}{_fmt(tot['completion_tokens']):>12}{_fmt(tot['total_tokens']):>13}")
+             f"{_fmt(tot['prompt_tokens']):>13}{_fmt(tot['completion_tokens']):>12}{_fmt(tot['total_tokens']):>13}"
+             f"{budget.fmt_usd(tot['cost']):>11}")
     if since_event:
         allu = [json.loads(r["extra"] or "{}").get("usage", {}) for r in
                 q("SELECT extra FROM events WHERE task_id=? AND kind='usage'", (task_id,))]
@@ -597,6 +687,7 @@ def ci_loop(task_id: str, name: str, summary: str, ctx: str) -> dict:
 def run_ci_only(task_id: str) -> None:
     """'Check/fix CI' button: only the CI loop for an already published project."""
     _since = max(0, _last_event_id(task_id) - 1)
+    _run_since[task_id] = _since
     t = get_task(task_id)
     update_task(task_id, status="running", stage="CI")
     try:
@@ -609,6 +700,8 @@ def run_ci_only(task_id: str) -> None:
     except Cancelled:
         update_task(task_id, status="cancelled", stage="cancelled")
         lead_say(task_id, "warn", "⏹ Cancelled")
+    except BudgetExceeded as b:
+        stop_for_budget(task_id, b)
     except Exception as e:
         update_task(task_id, status="failed", stage="error", result=str(e))
         lead_say(task_id, "error", f"💥 CI: {e}")
@@ -628,6 +721,7 @@ def _last_event_id(task_id: str) -> int:
 def run_pipeline(task_id: str, followup: str = "") -> None:
     # the user's prompt event was already written by the API → include it in this run's report
     _since = max(0, _last_event_id(task_id) - 1)
+    _run_since[task_id] = _since
     t = get_task(task_id)
     update_task(task_id, status="running", stage="planning")
     try:
@@ -733,9 +827,7 @@ def run_pipeline(task_id: str, followup: str = "") -> None:
             ctx + "\n\nQA VERDICT:\n" + json.dumps(verdict, ensure_ascii=False)[:3000])
         # The URL is taken ONLY from the publish tool's own event (real push), never from the
         # agent's text: models like to "report" invented links such as gitlab.com/your-username/...
-        gl = q("SELECT extra FROM events WHERE task_id=? AND role='devops' AND kind='gitlab' "
-               "AND message LIKE '✅%' ORDER BY id DESC LIMIT 1", (task_id,))
-        url = json.loads(gl[0]["extra"] or "{}").get("web_url", "") if gl else ""
+        url = _pushed_url(task_id)
         if not url:
             lead_say(task_id, "warn", "⚠ DevOps did not call publish_repository (no real push). "
                      "Trying to publish directly…")
@@ -771,6 +863,8 @@ def run_pipeline(task_id: str, followup: str = "") -> None:
     except Cancelled:
         update_task(task_id, status="cancelled", stage="cancelled")
         lead_say(task_id, "warn", "⏹ Task cancelled by the user")
+    except BudgetExceeded as b:
+        stop_for_budget(task_id, b)
     except Exception as e:
         update_task(task_id, status="failed", stage="error", result=str(e))
         h = setup_checks.hint(e, ui_lang())
@@ -831,9 +925,17 @@ async def team():
     return out
 
 
+_SPENT_SQL = ("(SELECT COALESCE(SUM(json_extract(e.extra,'$.usage.total_tokens')),0) FROM events e "
+              "WHERE e.task_id=tasks.id AND e.kind='usage') AS tokens, "
+              "(SELECT COALESCE(SUM(json_extract(e.extra,'$.usage.cost')),0) FROM events e "
+              "WHERE e.task_id=tasks.id AND e.kind='usage') AS cost")
+
+
 @app.get("/api/tasks", dependencies=[Depends(auth)])
 def list_tasks():
-    return q("SELECT id,title,status,stage,project_name,gitlab_url,created,updated FROM tasks ORDER BY created DESC LIMIT 200")
+    """Tasks with the tokens and USD spent (whole task, all runs)."""
+    return q(f"SELECT id,title,status,stage,project_name,gitlab_url,created,updated,{_SPENT_SQL} "
+             "FROM tasks ORDER BY created DESC LIMIT 200")
 
 
 @app.post("/api/tasks", dependencies=[Depends(auth)])
@@ -947,7 +1049,8 @@ def delete_tasks(body: BulkDelete):
 
 @app.get("/api/tasks/{tid}", dependencies=[Depends(auth)])
 def task_detail(tid: str):
-    return get_task(tid)
+    max_usd, max_tokens = budget_limits()
+    return {**get_task(tid), **spent(tid), "budget": {"usd": max_usd, "tokens": max_tokens}}
 
 
 @app.get("/api/tasks/{tid}/files", dependencies=[Depends(auth)])
@@ -1036,7 +1139,29 @@ async def setup_status():
         "git": git,
         "ui": {"password_set": bool((env("UI_USER") and env("UI_PASSWORD")) or setting("ui_hash")),
                "from_env": bool(env("UI_USER") and env("UI_PASSWORD")), "user": setting("ui_user") or env("UI_USER")},
+        "limits": _limits_status(),
     }
+
+
+def _limits_status() -> dict:
+    """Effective limits (0 = none) and which of them come from .env (the wizard cannot change those)."""
+    max_usd, max_tokens = budget_limits()
+    return {"budget_usd": max_usd, "budget_tokens": int(max_tokens),
+            "from_env": {k: bool(os.environ.get(v, "").strip()) for k, v in
+                         (("budget_usd", "TASK_BUDGET_USD"), ("budget_tokens", "TASK_BUDGET_TOKENS"))}}
+
+
+class SetupLimits(BaseModel):
+    budget_usd: str | float | None = ""        # empty / 0 = no limit
+    budget_tokens: str | float | None = ""
+
+
+@app.post("/api/setup/limits", dependencies=[Depends(auth)])
+def setup_limits(body: SetupLimits):
+    """Limits of one task run (a new task or a revision). Empty = no limit."""
+    usd, tokens = budget.parse_limit(body.budget_usd), budget.parse_limit(body.budget_tokens)
+    save_settings({"task_budget_usd": f"{usd:g}" if usd else "", "task_budget_tokens": str(int(tokens)) if tokens else ""})
+    return {"ok": True, **_limits_status()}
 
 
 class SetupModels(BaseModel):
