@@ -14,14 +14,16 @@ from pydantic import BaseModel
 
 from crewai import Agent, Crew, Process, Task
 
-from common import (ROLE, WORKSPACE, build_llm, tool_calls, emit, env, model_of, require_secret, set_overrides, set_task_context,
-                    share_with_shell, step_callback, token_ok, ui_lang, workspace_tools)
+from common import (ROLE, WORKSPACE, build_llm, cancel_requested, current_task_id, tool_calls, emit, env,
+                    install_cancel_hooks, model_of, request_cancel, require_secret, reset_cancel, set_overrides,
+                    set_task_context, share_with_shell, step_callback, token_ok, ui_lang, workspace_tools)
 from setup_checks import hint
 from roles import COMMON_RULES, ROLES
 
 require_secret()
 os.umask(0o002)                      # files the agent writes stay editable by the shell user
 share_with_shell(WORKSPACE)          # only the top level here; each project on /run
+install_cancel_hooks(cancel_requested)   # Stop: the agent's next model / tool call is aborted
 
 app = FastAPI(title=f"devteam-{ROLE}")
 
@@ -150,8 +152,27 @@ def ci(req: CiReq):
     if ROLE != "devops":
         raise HTTPException(404)
     set_task_context(req.task_id, _state.get("project_dir") or str(WORKSPACE))
+    reset_cancel()
     from repo_tool import ci_status
-    return ci_status(req.project_name, req.sha)
+    _state["ci"] = True
+    try:
+        return ci_status(req.project_name, req.sha)
+    finally:
+        _state["ci"] = False
+
+
+class CancelReq(BaseModel):
+    task_id: str
+
+
+@app.post("/cancel", dependencies=[Depends(from_lead)])
+def cancel(req: CancelReq):
+    """Stop: kill the running command and abort the agent's next model / tool call (only for this task)."""
+    if not req.task_id or current_task_id() != req.task_id or not (_state["busy"] or _state.get("ci")):
+        return {"ok": True, "running": False}
+    killed = request_cancel()
+    emit("warn", "⏹ stop requested" + (f": {killed} running command(s) killed" if killed else ""), task_id=req.task_id)
+    return {"ok": True, "running": True, "killed": killed}
 
 
 class GitConfig(BaseModel):
@@ -241,6 +262,7 @@ def run(req: RunReq):
         proj.mkdir(parents=True, exist_ok=True)
         share_with_shell(proj)
         set_task_context(req.task_id, str(proj))
+        reset_cancel()
         emit("start", f"▶ {req.title}")
         description = req.instruction
         if req.context:
@@ -252,9 +274,17 @@ def run(req: RunReq):
         t0 = time.time()
         result = crew.kickoff()
         text = str(getattr(result, "raw", result))
+        if cancel_requested():
+            emit("warn", f"⏹ {req.title}: stopped")
+            return {"ok": False, "cancelled": True, "output": "CANCELLED", "tools": tool_calls(),
+                    "usage": report_usage(req, crew, t0)}
         emit("done", f"✔ {req.title} ({int(time.time() - t0)}s)\n{text[:4000]}")
         return {"ok": True, "output": text, "usage": report_usage(req, crew, t0), "tools": tool_calls()}
     except Exception as e:
+        if cancel_requested():          # aborted by Stop / the time limit: not an error of the agent
+            emit("warn", f"⏹ {req.title}: stopped")
+            return {"ok": False, "cancelled": True, "output": "CANCELLED", "tools": tool_calls(),
+                    "usage": report_usage(req, locals().get("crew"), locals().get("t0", time.time()))}
         tb = traceback.format_exc()
         h = hint(e, ui_lang())
         emit("error", f"✖ {req.title}: {e}" + (f"\n{h}" if h else "") + f"\n{tb[-2000:]}")

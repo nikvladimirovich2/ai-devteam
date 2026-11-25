@@ -76,6 +76,9 @@ async def chat(req: Request):
 
     if not used_tool:
         name, args = ACTIONS[role]
+        if role == "Backend Developer" and "SMOKE-SLOW" in text:
+            # the Stop test: a command that would hang for 10 minutes
+            name, args = "run_shell", {"command": "echo slow-start; sleep 600; echo slow-end"}
         if body.get("tools"):
             return reply(None, [{"id": "call_" + uuid.uuid4().hex[:8], "type": "function",
                                  "function": {"name": name, "arguments": json.dumps(args)}}])

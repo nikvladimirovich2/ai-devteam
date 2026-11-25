@@ -17,6 +17,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versions: [SemVer](http
   budget is used up, the lead stops the team before the next step with the status «budget used up» and a final
   message with the amount spent and the repository link. The task header shows «💸 $… · N tokens», the report has a
   Cost line and a cost column per role. Checked between steps: the last step may go a little over the limit.
+- Stop interrupts the running step: the lead tells the workers to stop, the running shell command is killed with all
+  its child processes, further tool calls are refused and the agent's next model call is aborted (CrewAI hooks), so
+  the task ends as «cancelled» within seconds. A model request already in flight finishes first (`LLM_TIMEOUT`).
+- Total time limit of a task run: `TASK_TIME_LIMIT_MIN` (default 180, 0 = none; also in ⚙ Setup → Limits), then the
+  team is stopped with the status «time limit» and a message with the repository link.
+
+### Fixed
+- `SHELL_TIMEOUT` really stops a hanging command: before, only `sudo` was killed and the command itself could keep running. Now
+  the whole process session is killed and the agent gets a clear TIMEOUT message with the output so far and a hint.
+- Stop on a finished task no longer cancels its next revision right away.
 
 ## [0.2.4] - 2026-11-23
 

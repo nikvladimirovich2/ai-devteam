@@ -6,10 +6,11 @@ import hmac
 import json
 import os
 import pathlib
+import signal
 import subprocess
 import threading
 import time
-from typing import Any, Optional, Type
+from typing import Any, Callable, Optional, Type
 
 import httpx
 from pydantic import BaseModel, Field
@@ -35,7 +36,7 @@ from crewai.tools import BaseTool  # noqa: E402
 ROLE = os.environ.get("ROLE", "unknown")
 LEAD_URL = os.environ.get("LEAD_URL", "http://lead:8000")
 WORKSPACE = pathlib.Path(os.environ.get("WORKSPACE", "/workspace"))
-SHELL_TIMEOUT = int(os.environ.get("SHELL_TIMEOUT", "300") or 300)
+SHELL_TIMEOUT = int(os.environ.get("SHELL_TIMEOUT", "300") or 300)   # one command; it is killed with its children
 # Commands written by the model run as this separate, unprivileged user (see ShellTool). It cannot
 # read the agent process (/proc/<pid>/environ, memory), where the API key and tokens live.
 # Empty = run as the agent user (only for running the code outside the image, e.g. unit tests).
@@ -172,8 +173,9 @@ def build_llm(role: str = ROLE) -> LLM:
         "model": model,
         "api_key": api_key,
         "temperature": float(env("LLM_TEMPERATURE", "0.2")),
-        "timeout": float(env("LLM_TIMEOUT", "600")),
+        "timeout": float(env("LLM_TIMEOUT", "600")),     # one model request, seconds
     }
+    litellm.request_timeout = kwargs["timeout"]           # the LiteLLM path uses the global default too
     from setup_checks import container_url
     base_url = container_url(env("LLM_BASE_URL"))    # localhost -> the host, see setup_checks
     if base_url:
@@ -230,7 +232,76 @@ def set_task_context(task_id: str, project_dir: str) -> None:
 
 
 def count_tool(name: str) -> None:
+    if cancel_requested():
+        raise RuntimeError("the task was stopped (Stop / time limit): do not call more tools, finish now")
     _tool_calls[name] = _tool_calls.get(name, 0) + 1
+
+
+# ---------------------------------------------------------------- stop inside a step
+# The lead asks a worker to stop (POST /cancel): the running shell command is killed with its children, every
+# further tool call fails and the next model call is aborted (CrewAI before-hooks raise HookAborted), so the
+# step ends within seconds. A model request already in flight is not interrupted: it finishes or hits LLM_TIMEOUT.
+_cancel_evt = threading.Event()
+_shell_procs: set = set()            # running ShellTool processes (session leaders)
+_shell_lock = threading.Lock()
+
+
+def cancel_requested() -> bool:
+    return _cancel_evt.is_set()
+
+
+def reset_cancel() -> None:
+    _cancel_evt.clear()
+
+
+def request_cancel() -> int:
+    """Stop the current job: flag + kill the running shell commands. Returns how many commands were killed."""
+    _cancel_evt.set()
+    with _shell_lock:
+        procs = list(_shell_procs)
+    for p in procs:
+        kill_tree(p)
+    return len(procs)
+
+
+def kill_tree(p: subprocess.Popen) -> None:
+    """Kill a ShellTool command with everything it started. The command runs in its own session (start_new_session),
+    as the shell user: the agent user may not signal those processes, so the kill itself runs as that user too."""
+    sid = p.pid
+    if SHELL_USER:
+        try:
+            subprocess.run(["sudo", "-n", "-u", SHELL_USER, "--", "/usr/bin/pkill", "-KILL", "-s", str(sid)],
+                           capture_output=True, timeout=15)
+        except Exception:  # noqa: BLE001
+            pass
+    try:
+        os.killpg(sid, signal.SIGKILL)          # sudo itself / the command when SHELL_USER is empty
+    except (OSError, AttributeError):
+        pass
+    try:
+        p.kill()
+    except OSError:
+        pass
+
+
+def install_cancel_hooks(is_cancelled: Callable[[], bool]) -> bool:
+    """Abort the agent's next model / tool call once [is_cancelled]() is true (CrewAI global hooks)."""
+    try:
+        from crewai.hooks import HookAborted, register_before_llm_call_hook, register_before_tool_call_hook
+    except Exception:  # noqa: BLE001 - an older CrewAI without hooks: tools still refuse to run
+        return False
+
+    def stop_llm(_ctx: Any) -> None:
+        if is_cancelled():
+            raise HookAborted("the task was stopped (Stop / time limit)", source="devteam")
+
+    def stop_tool(_ctx: Any) -> None:
+        if is_cancelled():
+            raise HookAborted("the task was stopped (Stop / time limit)", source="devteam")
+
+    register_before_llm_call_hook(stop_llm)
+    register_before_tool_call_hook(stop_tool)
+    return True
 
 
 def tool_calls() -> dict[str, int]:
@@ -370,19 +441,59 @@ class ShellTool(BaseTool):
     def _run(self, command: str) -> str:
         count_tool(self.name)
         emit("shell", f"$ {command}")
-        try:
-            r = subprocess.run(
-                shell_argv(command), cwd=str(current_project_dir()), env=_shell_env(),
-                capture_output=True, text=True, timeout=SHELL_TIMEOUT,
-            )
-            out = (r.stdout + ("\n" + r.stderr if r.stderr else "")).strip()
-            if len(out) > 15000:
-                out = out[:5000] + "\n...\n" + out[-10000:]
-            emit("shell", f"exit={r.returncode}\n{out[-3000:]}")
-            return f"exit_code={r.returncode}\n{out}"
-        except subprocess.TimeoutExpired:
-            emit("shell", f"timeout {SHELL_TIMEOUT}s")
-            return f"TIMEOUT after {SHELL_TIMEOUT}s"
+        code, out, why = run_command(command, SHELL_TIMEOUT)
+        if len(out) > 15000:
+            out = out[:5000] + "\n...\n" + out[-10000:]
+        if why == "timeout":
+            emit("shell", f"exit={code}\n⏱ timeout {SHELL_TIMEOUT}s: the command and its child processes were killed"
+                          f"\n{out[-2000:]}")
+            return (f"exit_code={code}\nTIMEOUT: the command was still running after {SHELL_TIMEOUT}s (SHELL_TIMEOUT) "
+                    "and was killed together with its child processes. Output so far:\n"
+                    f"{out}\n"
+                    "Hint: start servers / watchers in the background (`cmd > server.log 2>&1 &`) and check them "
+                    "with curl; wrap commands that may hang with `timeout 120 cmd`; never wait for user input.")
+        if why == "cancelled":
+            emit("shell", f"exit={code}\n⏹ the task was stopped: the command was killed")
+            return f"exit_code={code}\nCANCELLED: the task was stopped, the command was killed. Do not continue."
+        emit("shell", f"exit={code}\n{out[-3000:]}")
+        return f"exit_code={code}\n{out}"
+
+
+def run_command(command: str, timeout: float) -> tuple[int, str, str]:
+    """Run a model-written command as the shell user, in its own session so that it can be killed with all its
+    children. Returns (exit code, stdout+stderr, '' | 'timeout' | 'cancelled'). Exit code 124 = timeout (like
+    coreutils timeout), 130 = cancelled."""
+    if cancel_requested():
+        return 130, "", "cancelled"
+    p = subprocess.Popen(shell_argv(command), cwd=str(current_project_dir()), env=_shell_env(),
+                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL, text=True,
+                         start_new_session=True)
+    with _shell_lock:
+        _shell_procs.add(p)
+    deadline, why = time.monotonic() + timeout, ""
+    try:
+        while True:
+            try:
+                so, se = p.communicate(timeout=1)
+                break
+            except subprocess.TimeoutExpired:
+                if cancel_requested():
+                    why = "cancelled"
+                elif time.monotonic() > deadline:
+                    why = "timeout"
+                if why:
+                    kill_tree(p)
+                    try:
+                        so, se = p.communicate(timeout=10)
+                    except subprocess.TimeoutExpired:   # a detached process still holds the pipe: give up on it
+                        so, se = "", ""
+                    break
+    finally:
+        with _shell_lock:
+            _shell_procs.discard(p)
+    out = ((so or "") + ("\n" + se if se else "")).strip()
+    code = {"timeout": 124, "cancelled": 130}.get(why, p.returncode if p.returncode is not None else -1)
+    return code, out, why
 
 
 def _shell_env() -> dict:

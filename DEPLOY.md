@@ -87,11 +87,19 @@ Limits of a task run (optional; also in ⚙ Setup → *Limits*, values in `.env`
 |---|---|---|
 | `TASK_BUDGET_USD` | empty = no limit | max cost of one run (a new task or a revision), US dollars. Prices from LiteLLM's table; local / unknown models count as $0 |
 | `TASK_BUDGET_TOKENS` | empty = no limit | max tokens of one run (counts for every model, also local ones) |
+| `TASK_TIME_LIMIT_MIN` | 180 | total time of one run, minutes; then the team is stopped (status «time limit»). `0` = no limit |
+| `SHELL_TIMEOUT` | 300 | one shell command of an agent, seconds; then it is killed with all its child processes and the agent gets a clear TIMEOUT error (`.env` only) |
+| `LLM_TIMEOUT` | 600 | one request to the model, seconds (`.env` only) |
 
 When a limit is used up, the lead stops the team before the next step (status «budget used up») and writes a final
 message with the amount spent and the repository link. The check runs between the agents' steps, so the last step may
 go a little over the limit. The cost of every step, the total in the report and «💸 spent» in the task header are
 shown also without a limit.
+
+**Stop** interrupts the running step: the agent's shell command is killed with its child processes, every further
+tool call is refused and the agent's next model call is aborted, so the task ends as «cancelled» within seconds. A
+model request that is already in flight is not cut off — it finishes (or hits `LLM_TIMEOUT`) first. The time limit
+stops the team the same way.
 
 > **`$` in values.** Compose expands `$VAR` inside `.env`. A key containing `$` must be in single quotes:
 > `QA_API_KEY='$abc#def'`, otherwise part of it is silently dropped.

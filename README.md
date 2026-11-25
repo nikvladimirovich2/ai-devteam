@@ -102,6 +102,8 @@ To publish directly (`UI_BIND=0.0.0.0`), set a password (⚙ Setup, or `UI_USER`
 | `GIT_NAMESPACE` | GitLab: group for new projects (required). GitHub: organization (empty = the token owner's personal account) |
 | `MAX_QA_ROUNDS` | how many times QA can send work back for fixes |
 | `TASK_BUDGET_USD`, `TASK_BUDGET_TOKENS` | optional budget of one task run; when it is used up the team stops with a report (also in ⚙ Setup → Limits) |
+| `TASK_TIME_LIMIT_MIN` | total time of one task run, minutes (default 180, 0 = none) |
+| `SHELL_TIMEOUT`, `LLM_TIMEOUT` | one shell command (killed with its children) / one model request, seconds |
 | `LLM_SSL_VERIFY_DISABLE`, `GIT_SSL_VERIFY_DISABLE` | `1` for self-signed certificates |
 
 ### Corporate / self-signed certificates (LLM and GitLab over HTTPS)

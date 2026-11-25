@@ -18,8 +18,8 @@ jobs:
           python-version: "3.12"
       - name: Python syntax
         run: python -m compileall -q agent/app tests
-      - name: Unit tests (setup wizard helpers)
-        run: pip install -q httpx pytest && python -m pytest -q tests
+      - name: Unit tests (setup wizard, budget, shell timeout / Stop)
+        run: pip install -q httpx pytest pydantic && python -m pytest -q tests
       - name: Shell syntax
         run: for f in scripts/*.sh tests/*.sh; do bash -n "$f"; done
       - name: Compose files

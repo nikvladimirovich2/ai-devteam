@@ -90,6 +90,28 @@ curl -fs "$B/api/tasks/$BID" | json 'd["result"]' | grep -q "💸" || fail "no b
 post /api/setup/limits '{}' >/dev/null
 [[ $(curl -fs "$B/api/setup" | json 'd["limits"]["budget_tokens"]') == 0 ]] || fail "limits not cleared"
 
+echo "== Stop interrupts a running step (a 10-minute command is killed)"
+SID=$(post /api/tasks '{"prompt":"SMOKE-SLOW stop test"}' | json 'd["id"]')
+for i in $(seq 1 40); do
+  ev=$(curl -s --max-time 2 "$B/api/tasks/$SID/events" || true)
+  grep -q "sleep 600" <<<"$ev" && break
+  [[ $i == 40 ]] && fail "the slow command did not start"
+  sleep 3
+done
+sleep 3
+docker exec devteam-backend pgrep -f "sleep 600" >/dev/null || fail "the slow command is not running before Stop"
+post "/api/tasks/$SID/cancel" '{}' >/dev/null
+t0=$(date +%s); sstatus=""
+for i in $(seq 1 30); do
+  sstatus=$(curl -fs "$B/api/tasks/$SID" | json 'd["status"]')
+  case "$sstatus" in running|queued) sleep 2 ;; *) break ;; esac
+done
+echo "stopped in $(( $(date +%s) - t0 ))s: $sstatus"
+[[ "$sstatus" == cancelled ]] || fail "status after Stop: $sstatus (expected cancelled)"
+if docker exec devteam-backend pgrep -f "sleep 600" >/dev/null; then fail "the command survived Stop"; fi
+ev=$(curl -s --max-time 2 "$B/api/tasks/$SID/events" || true)
+grep -qi "stop requested" <<<"$ev" || fail "no stop event"
+
 echo "== isolation of the agents"
 # the shell user of the agents cannot read the agent's environment, nor the devops Git store
 if docker exec -u runner devteam-devops sh -c 'cat /proc/1/environ >/dev/null 2>&1'; then fail "runner can read /proc/1/environ"; fi

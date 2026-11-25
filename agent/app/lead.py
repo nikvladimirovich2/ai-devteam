@@ -31,8 +31,8 @@ from pydantic import BaseModel
 
 from crewai import Agent, Crew, Process, Task
 
-from common import (WORKSPACE, build_llm, env, env_bool, extract_json, model_of, internal_headers, require_secret, set_overrides,
-                    token_ok, ui_lang)
+from common import (WORKSPACE, build_llm, env, env_bool, extract_json, install_cancel_hooks, model_of, internal_headers,
+                    require_secret, set_overrides, token_ok, ui_lang)
 import budget
 import setup_checks
 from roles import ROLES
@@ -156,7 +156,8 @@ def role_settings(role: str) -> dict[str, str]:
 
 def limit_settings() -> dict[str, str]:
     """Limits of a task run from the wizard (⚙ Setup → Limits); .env wins over them."""
-    return {"TASK_BUDGET_USD": setting("task_budget_usd"), "TASK_BUDGET_TOKENS": setting("task_budget_tokens")}
+    return {"TASK_BUDGET_USD": setting("task_budget_usd"), "TASK_BUDGET_TOKENS": setting("task_budget_tokens"),
+            "TASK_TIME_LIMIT_MIN": setting("task_time_limit_min")}
 
 
 def apply_settings() -> None:
@@ -221,6 +222,10 @@ class Cancelled(Exception):
     pass
 
 
+class TimeLimit(Cancelled):
+    """The run took longer than TASK_TIME_LIMIT_MIN."""
+
+
 class BudgetExceeded(Exception):
     """The run used up TASK_BUDGET_USD / TASK_BUDGET_TOKENS."""
 
@@ -254,10 +259,87 @@ def check_budget(task_id: str) -> None:
 
 
 def check_cancel(task_id: str) -> None:
-    """Between the steps: Stop pressed, or the budget is used up."""
+    """Between the steps: Stop pressed, the time limit reached, or the budget used up."""
     if task_id in _cancel:
-        raise Cancelled()
+        raise TimeLimit() if task_id in _timed_out else Cancelled()
     check_budget(task_id)
+
+
+# ---------------------------------------------------------------- stop inside a step, time limit
+_run_started: dict[str, float] = {}     # task_id -> start of the current run
+_timed_out: set[str] = set()
+_lead_task = {"id": ""}                # the run the lead itself is thinking for (its own model calls)
+
+
+def time_limit_s() -> float:
+    """Total time of one run (a new task or a revision): TASK_TIME_LIMIT_MIN, default 180 minutes, 0 = none."""
+    return budget.parse_limit(env("TASK_TIME_LIMIT_MIN", "180")) * 60
+
+
+def stop_workers(task_id: str) -> None:
+    """Ask every worker to stop the task's running step now (kill the command, abort the next model call)."""
+    def one(role: str, url: str) -> None:
+        try:
+            httpx.post(f"{url}/cancel", json={"task_id": task_id}, headers=internal_headers(role), timeout=10)
+        except Exception:  # noqa: BLE001 - a worker that is down has nothing to stop
+            pass
+    for r, u in WORKERS.items():
+        threading.Thread(target=one, args=(r, u), daemon=True).start()
+
+
+def request_stop(task_id: str) -> None:
+    _cancel.add(task_id)
+    stop_workers(task_id)
+
+
+def _watchdog() -> None:
+    while True:
+        time.sleep(10)
+        try:
+            lim = time_limit_s()
+            for tid, t0 in list(_run_started.items()):
+                if lim and time.time() - t0 > lim and tid not in _timed_out:
+                    _timed_out.add(tid)
+                    lead_say(tid, "warn", f"⏱ The run took longer than {int(lim // 60)} min (TASK_TIME_LIMIT_MIN): "
+                                          "stopping the team")
+                    request_stop(tid)
+        except Exception:  # noqa: BLE001 - the watchdog never dies
+            pass
+
+
+threading.Thread(target=_watchdog, daemon=True, name="time-limit").start()
+install_cancel_hooks(lambda: bool(_lead_task["id"]) and _lead_task["id"] in _cancel)
+
+
+def _begin_run(task_id: str) -> int:
+    since = max(0, _last_event_id(task_id) - 1)
+    _run_since[task_id] = since
+    _run_started[task_id] = time.time()
+    _timed_out.discard(task_id)
+    _lead_task["id"] = task_id
+    return since
+
+
+def _end_run(task_id: str) -> None:
+    _cancel.discard(task_id)
+    _run_started.pop(task_id, None)
+    _timed_out.discard(task_id)
+    _lead_task["id"] = ""
+
+
+def stop_for_time(task_id: str) -> None:
+    url = _pushed_url(task_id) or get_task(task_id)["gitlab_url"] or ""
+    mins = int(time_limit_s() // 60)
+    if ui_lang() == "ru":
+        msg = (f"⏱ Превышен лимит времени на запуск ({mins} мин, TASK_TIME_LIMIT_MIN): команда остановлена.\n"
+               f"Репозиторий: {url or 'не опубликован'}\n"
+               "Лимит меняется в ⚙ Настройка → Ограничения; доработка продолжит с текущего кода.")
+    else:
+        msg = (f"⏱ The run hit the time limit ({mins} min, TASK_TIME_LIMIT_MIN): the team was stopped.\n"
+               f"Repository: {url or 'not published'}\n"
+               "Change the limit in ⚙ Setup → Limits; a revision continues from the current code.")
+    update_task(task_id, status="timeout", stage="time limit", gitlab_url=url, result=msg)
+    lead_say(task_id, "final", msg, gitlab_url=url)
 
 
 def lead_say(task_id: str, kind: str, msg: str, **extra: Any) -> None:
@@ -275,6 +357,9 @@ def lead_llm(task_id: str, instruction: str, expected: str) -> str:
     t0 = time.time()
     try:
         return str(getattr(crew.kickoff(), "raw", ""))
+    except Exception:
+        check_cancel(task_id)          # aborted by Stop / the time limit
+        raise
     finally:
         try:
             m = crew.calculate_usage_metrics() if hasattr(crew, "calculate_usage_metrics") else crew.usage_metrics
@@ -313,6 +398,8 @@ def call_worker(task_id: str, role: str, title: str, instruction: str, context: 
             _worker_tools[(task_id, role)] = data.get("tools")
             if not data.get("ok"):
                 check_cancel(task_id)          # a failed step because of Stop / budget is not an error
+                if data.get("cancelled"):
+                    raise Cancelled()
                 raise RuntimeError(f"{role}: {data.get('output', '')[:1000]}")
             check_cancel(task_id)
             return data.get("output", "")
@@ -448,7 +535,7 @@ REPORT_T = {
            "no_usage": "(провайдер не вернул число токенов)",
            "st": {"queued": "в очереди", "running": "выполняется", "done": "готово", "done_no_push": "готово (без публикации)",
                   "ci_failed": "CI не прошёл", "failed": "ошибка", "cancelled": "остановлена", "interrupted": "прервана",
-                  "budget": "бюджет исчерпан"}},
+                  "budget": "бюджет исчерпан", "timeout": "лимит времени"}},
 }
 
 
@@ -686,8 +773,7 @@ def ci_loop(task_id: str, name: str, summary: str, ctx: str) -> dict:
 
 def run_ci_only(task_id: str) -> None:
     """'Check/fix CI' button: only the CI loop for an already published project."""
-    _since = max(0, _last_event_id(task_id) - 1)
-    _run_since[task_id] = _since
+    _since = _begin_run(task_id)
     t = get_task(task_id)
     update_task(task_id, status="running", stage="CI")
     try:
@@ -695,8 +781,11 @@ def run_ci_only(task_id: str) -> None:
             raise RuntimeError("the project has not been published to the repository yet")
         ctx = f"PROJECT: {t['project_name']}\nCUSTOMER'S TASK:\n{t['prompt']}\n"
         ci = ci_loop(task_id, t["project_name"], t["title"], ctx)
+        check_cancel(task_id)
         st = {"success": "done", "failed": "ci_failed"}.get(ci.get("status"), "done")
         update_task(task_id, status=st, stage=f"CI: {ci.get('status', '?')}")
+    except TimeLimit:
+        stop_for_time(task_id)
     except Cancelled:
         update_task(task_id, status="cancelled", stage="cancelled")
         lead_say(task_id, "warn", "⏹ Cancelled")
@@ -706,7 +795,7 @@ def run_ci_only(task_id: str) -> None:
         update_task(task_id, status="failed", stage="error", result=str(e))
         lead_say(task_id, "error", f"💥 CI: {e}")
     finally:
-        _cancel.discard(task_id)
+        _end_run(task_id)
         try:
             save_report(task_id, _since)
         except Exception as e:
@@ -720,8 +809,7 @@ def _last_event_id(task_id: str) -> int:
 
 def run_pipeline(task_id: str, followup: str = "") -> None:
     # the user's prompt event was already written by the API → include it in this run's report
-    _since = max(0, _last_event_id(task_id) - 1)
-    _run_since[task_id] = _since
+    _since = _begin_run(task_id)
     t = get_task(task_id)
     update_task(task_id, status="running", stage="planning")
     try:
@@ -860,17 +948,26 @@ def run_pipeline(task_id: str, followup: str = "") -> None:
             status = "ci_failed"
         update_task(task_id, status=status, stage="finished", gitlab_url=url, result=final)
         lead_say(task_id, "final", final, gitlab_url=url)
+    except TimeLimit:
+        stop_for_time(task_id)
     except Cancelled:
         update_task(task_id, status="cancelled", stage="cancelled")
         lead_say(task_id, "warn", "⏹ Task cancelled by the user")
     except BudgetExceeded as b:
         stop_for_budget(task_id, b)
     except Exception as e:
-        update_task(task_id, status="failed", stage="error", result=str(e))
-        h = setup_checks.hint(e, ui_lang())
-        lead_say(task_id, "error", f"💥 {e}" + (f"\n{h}" if h else "") + f"\n{traceback.format_exc()[-2500:]}")
+        if task_id in _cancel:         # e.g. a parallel step failed because it was stopped
+            if task_id in _timed_out:
+                stop_for_time(task_id)
+            else:
+                update_task(task_id, status="cancelled", stage="cancelled")
+                lead_say(task_id, "warn", "⏹ Task cancelled by the user")
+        else:
+            update_task(task_id, status="failed", stage="error", result=str(e))
+            h = setup_checks.hint(e, ui_lang())
+            lead_say(task_id, "error", f"💥 {e}" + (f"\n{h}" if h else "") + f"\n{traceback.format_exc()[-2500:]}")
     finally:
-        _cancel.discard(task_id)
+        _end_run(task_id)
         try:
             save_report(task_id, _since)
         except Exception as e:
@@ -991,10 +1088,13 @@ def check_ci(tid: str):
 
 @app.post("/api/tasks/{tid}/cancel", dependencies=[Depends(auth)])
 def cancel(tid: str):
-    get_task(tid)
-    _cancel.add(tid)
-    add_event(tid, "user", "warn", "Cancellation requested (will stop after the current agent step finishes)")
-    return {"ok": True}
+    t = get_task(tid)
+    if t["status"] not in ("running", "queued"):
+        return {"ok": True, "running": False}
+    request_stop(tid)
+    add_event(tid, "user", "warn", "⏹ Stop requested: the running command is killed and the agents stop before "
+                                   "their next model call (a model request already in flight finishes first)")
+    return {"ok": True, "running": True}
 
 
 class BulkDelete(BaseModel):
@@ -1146,21 +1246,27 @@ async def setup_status():
 def _limits_status() -> dict:
     """Effective limits (0 = none) and which of them come from .env (the wizard cannot change those)."""
     max_usd, max_tokens = budget_limits()
-    return {"budget_usd": max_usd, "budget_tokens": int(max_tokens),
+    return {"budget_usd": max_usd, "budget_tokens": int(max_tokens), "time_limit_min": int(time_limit_s() // 60),
             "from_env": {k: bool(os.environ.get(v, "").strip()) for k, v in
-                         (("budget_usd", "TASK_BUDGET_USD"), ("budget_tokens", "TASK_BUDGET_TOKENS"))}}
+                         (("budget_usd", "TASK_BUDGET_USD"), ("budget_tokens", "TASK_BUDGET_TOKENS"),
+                          ("time_limit_min", "TASK_TIME_LIMIT_MIN"))}}
 
 
 class SetupLimits(BaseModel):
     budget_usd: str | float | None = ""        # empty / 0 = no limit
     budget_tokens: str | float | None = ""
+    time_limit_min: str | float | None = None  # None = keep; "" = the default (180); 0 = no limit
 
 
 @app.post("/api/setup/limits", dependencies=[Depends(auth)])
 def setup_limits(body: SetupLimits):
     """Limits of one task run (a new task or a revision). Empty = no limit."""
     usd, tokens = budget.parse_limit(body.budget_usd), budget.parse_limit(body.budget_tokens)
-    save_settings({"task_budget_usd": f"{usd:g}" if usd else "", "task_budget_tokens": str(int(tokens)) if tokens else ""})
+    values = {"task_budget_usd": f"{usd:g}" if usd else "", "task_budget_tokens": str(int(tokens)) if tokens else ""}
+    if body.time_limit_min is not None:
+        raw = str(body.time_limit_min).strip()
+        values["task_time_limit_min"] = "" if raw == "" else (str(int(budget.parse_limit(raw))) or "0")
+    save_settings(values)
     return {"ok": True, **_limits_status()}
 
 

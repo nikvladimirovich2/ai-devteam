@@ -26,7 +26,7 @@
   .t .meta { color:var(--mute); font-size:12px }
   .badge { display:inline-block; padding:0 6px; border-radius:8px; font-size:11px; border:1px solid var(--line) }
   .s-running,.s-queued { color:var(--warn) } .s-done { color:var(--ok) } .s-failed,.s-cancelled,.s-interrupted { color:var(--bad) }
-  .s-done_no_push { color:var(--warn) } .s-ci_failed, .s-budget { color:var(--bad) }
+  .s-done_no_push { color:var(--warn) } .s-ci_failed, .s-budget, .s-timeout { color:var(--bad) }
   .ev.k-ci { border-left-color:var(--warn) }
   #center { display:grid; grid-template-rows:auto 1fr auto; min-height:0 }
   #head { padding:10px 16px; border-bottom:1px solid var(--line) }
@@ -199,6 +199,7 @@
     <p class="lead" data-t="limits_help"></p>
     <label data-t="budget_usd"></label><input id="lUsd" inputmode="decimal" data-tp="no_limit">
     <label data-t="budget_tokens"></label><input id="lTok" inputmode="numeric" data-tp="no_limit">
+    <label data-t="time_limit"></label><input id="lTime" inputmode="numeric" placeholder="180">
     <div class="row"><button class="sec" type="button" onclick="saveLimits()" data-t="save"></button></div>
     <div class="st" id="s4st"></div>
   </div>
@@ -249,7 +250,7 @@ function renderTasks() {
 }
 
 let TASKS = [], PICK = new Set();
-const FAILED = ["failed", "cancelled", "interrupted", "done_no_push", "ci_failed", "budget"];
+const FAILED = ["failed", "cancelled", "interrupted", "done_no_push", "ci_failed", "budget", "timeout"];
 function taskClick(ev, id) {
   if (document.body.classList.contains("selmode")) {
     const t = TASKS.find(x => x.id === id);
@@ -589,7 +590,7 @@ const T = {
        del_task_title:"Удалить задачу", running_nodel:"выполняется — удалить нельзя",
        del_confirm:"Удалить задачу «{0}»?\nЕё история и рабочие файлы на сервере будут удалены.\nРепозиторий в GitLab/GitHub НЕ затрагивается.",
        del_many_confirm:"Удалить выбранные задачи: {0}?\nИстория и рабочие файлы будут удалены. Репозитории в GitLab/GitHub НЕ затрагиваются.",
-       skipped_running:"Пропущены (выполняются): ", cancel_confirm:"Остановить работу команды над этой задачей?",
+       skipped_running:"Пропущены (выполняются): ", cancel_confirm:"Остановить работу команды над этой задачей?\nТекущая команда агента будет прервана, агенты остановятся перед следующим обращением к модели.",
        copy:"📋 копировать", copy_na:"Копирование недоступно (нужен https или localhost)",
        r_lead:"Тимлид", r_architect:"Архитектор", r_backend:"Бэкенд", r_frontend:"Фронтенд", r_qa:"QA", r_devops:"DevOps", r_user:"Вы",
        st_queued:"в очереди", st_running:"выполняется", st_done:"готово", st_done_no_push:"готово (без публикации)",
@@ -597,7 +598,9 @@ const T = {
        st_budget:"бюджет исчерпан", tokens:"токенов", saved:"Сохранено",
        s_limits:"4. Ограничения (необязательно)",
        limits_help:"Сколько может стоить один запуск задачи (новая задача или доработка). Когда лимит исчерпан, тимлид останавливает команду и пишет итог со ссылкой на репозиторий. Цены — из таблицы LiteLLM; локальные модели и модели с неизвестной ценой считаются бесплатными, но их токены учитываются. Лимит проверяется между шагами агентов, поэтому последний шаг может немного его превысить. Пусто = без ограничений.",
-       budget_usd:"Бюджет на запуск, долларов США", budget_tokens:"Бюджет на запуск, токенов", no_limit:"без ограничений"},
+       budget_usd:"Бюджет на запуск, долларов США", budget_tokens:"Бюджет на запуск, токенов", no_limit:"без ограничений",
+       time_limit:"Лимит времени на запуск, минут (по умолчанию 180, 0 = без ограничений): потом команда останавливается",
+       st_timeout:"лимит времени"},
   en: {setup_title:"Setup", setup_lead:"Three steps: the AI model, where to publish the projects and a password. Keys stay on this server.",
        s1:"1. AI model", s1_help:"Pick the provider, paste the key and choose a model. The model must support tool calling.",
        provider:"Provider", api_key:"API key", get_key:"get a key ↗", base_url:"Model server address", model:"Model",
@@ -634,7 +637,7 @@ const T = {
        del_task_title:"Delete task", running_nodel:"running — cannot delete",
        del_confirm:"Delete task «{0}»?\nIts history and working files on the server will be deleted.\nThe repository in GitLab/GitHub is NOT touched.",
        del_many_confirm:"Delete selected tasks: {0}?\nThe history and working files will be deleted. Repositories in GitLab/GitHub are NOT touched.",
-       skipped_running:"Skipped (running): ", cancel_confirm:"Stop the team's work on this task?",
+       skipped_running:"Skipped (running): ", cancel_confirm:"Stop the team's work on this task?\nThe agent's running command is killed and the agents stop before their next model call.",
        copy:"📋 copy", copy_na:"Copying is not available (needs https/localhost)",
        r_lead:"Team Lead", r_architect:"Architect", r_backend:"Backend", r_frontend:"Frontend", r_qa:"QA", r_devops:"DevOps", r_user:"You",
        st_queued:"queued", st_running:"running", st_done:"done", st_done_no_push:"done (no push)",
@@ -642,7 +645,9 @@ const T = {
        st_budget:"budget used up", tokens:"tokens", saved:"Saved",
        s_limits:"4. Limits (optional)",
        limits_help:"How much one run of a task (a new task or a revision) may cost. When the limit is used up, the Team Lead stops the team and writes a final message with the repository link. Prices come from LiteLLM's table; local models and models without a known price count as free, but their tokens still count. The limit is checked between the agents' steps, so the last step may go a little over it. Empty = no limit.",
-       budget_usd:"Budget per run, US dollars", budget_tokens:"Budget per run, tokens", no_limit:"no limit"},
+       budget_usd:"Budget per run, US dollars", budget_tokens:"Budget per run, tokens", no_limit:"no limit",
+       time_limit:"Time limit per run, minutes (default 180, 0 = no limit): then the team is stopped",
+       st_timeout:"time limit"},
 };
 let LANG = (localStorage.getItem("lang") || (navigator.language || "en")).toLowerCase().startsWith("ru") ? "ru" : "en";
 let SETUP = null;
@@ -744,12 +749,14 @@ async function saveGit() {
 function fillLimits() {
   const L = SETUP.limits || {}, E = L.from_env || {};
   $("#lUsd").value = L.budget_usd || ""; $("#lTok").value = L.budget_tokens || "";
-  $("#lUsd").disabled = !!E.budget_usd; $("#lTok").disabled = !!E.budget_tokens;
+  $("#lTime").value = L.time_limit_min ?? "";
+  $("#lUsd").disabled = !!E.budget_usd; $("#lTok").disabled = !!E.budget_tokens; $("#lTime").disabled = !!E.time_limit_min;
   const set = L.budget_usd || L.budget_tokens;
   $("#d4").textContent = set ? t("ready") + (E.budget_usd || E.budget_tokens ? " · " + t("from_env") : "") : "";
 }
 async function saveLimits() {
-  try { SETUP.limits = await post("/api/setup/limits", {budget_usd: $("#lUsd").value, budget_tokens: $("#lTok").value});
+  try { SETUP.limits = await post("/api/setup/limits", {budget_usd: $("#lUsd").value, budget_tokens: $("#lTok").value,
+                                                        time_limit_min: $("#lTime").value});
         fillLimits(); status("#s4st", "ok", t("saved")); }
   catch (e) { status("#s4st", "bad", e.message); }
 }

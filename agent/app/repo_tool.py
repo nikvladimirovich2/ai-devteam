@@ -18,7 +18,17 @@ import httpx
 from pydantic import BaseModel, Field
 from crewai.tools import BaseTool
 
-from common import current_project_dir, emit, env, env_bool
+from common import cancel_requested, current_project_dir, emit, env, env_bool
+
+
+def _stopped(seconds: float) -> bool:
+    """Sleep between CI polls; True as soon as the task is stopped (Stop / time limit)."""
+    end = time.time() + seconds
+    while time.time() < end:
+        if cancel_requested():
+            return True
+        time.sleep(min(1.0, max(0.0, end - time.time())))
+    return cancel_requested()
 
 
 # ------------------------------------------------------------------ config
@@ -251,7 +261,8 @@ def _ci_gitlab(c: dict, path: str, sha: str, timeout_s: int, poll: int) -> dict:
                 # no pipeline 3 minutes after the push: CI is not configured or there are no runners
                 return {"status": "no_pipeline", "details": "No pipeline appeared for the commit "
                         "(no .gitlab-ci.yml, CI disabled in the project, or no runners)."}
-            time.sleep(poll)
+            if _stopped(poll):
+                return {"status": "canceled", "details": "stopped by the user / time limit"}
         if not pipe:
             return {"status": "no_pipeline", "details": "pipeline not found"}
         if pipe["status"] not in _GL_DONE:
@@ -295,7 +306,8 @@ def _ci_github(c: dict, path: str, sha: str, timeout_s: int, poll: int) -> dict:
             if runs and cur != last:
                 last = cur
                 emit("ci", "⏳ GitHub Actions: " + cur)
-            time.sleep(poll)
+            if _stopped(poll):
+                return {"status": "canceled", "details": "stopped by the user / time limit"}
         if not runs:
             return {"status": "no_pipeline", "details": "workflow run not found"}
         if not all(x["status"] == "completed" for x in runs):

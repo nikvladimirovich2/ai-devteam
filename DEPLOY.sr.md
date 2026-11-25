@@ -87,10 +87,18 @@ Ograničenja jednog pokretanja zadatka (opciono; isto u `⚙ Setup` → *Limits*
 |---|---|---|
 | `TASK_BUDGET_USD` | prazno = bez ograničenja | najveća cena jednog pokretanja (novi zadatak ili dorada), u američkim dolarima. Cene iz LiteLLM tabele; lokalni i nepoznati modeli se računaju kao $0 |
 | `TASK_BUDGET_TOKENS` | prazno = bez ograničenja | najviše tokena jednog pokretanja (broje se za svaki model, i za lokalne) |
+| `TASK_TIME_LIMIT_MIN` | 180 | ukupno vreme jednog pokretanja, u minutima; zatim se tim zaustavlja (status «time limit»). `0` = bez ograničenja |
+| `SHELL_TIMEOUT` | 300 | jedna shell komanda agenta, u sekundama; zatim se ubija zajedno sa svim podprocesima, a agent dobija jasnu TIMEOUT grešku (samo `.env`) |
+| `LLM_TIMEOUT` | 600 | jedan zahtev ka modelu, u sekundama (samo `.env`) |
 
 Kada se ograničenje potroši, vođa tima zaustavlja tim pre sledećeg koraka (status «budget used up») i piše završnu
 poruku sa potrošenim iznosom i linkom ka repozitorijumu. Provera se radi između koraka agenata, pa poslednji korak može
 malo da pređe ograničenje. Cena svakog koraka, ukupan iznos u izveštaju i «💸» u zaglavlju zadatka vide se i bez ograničenja.
+
+**Stop** prekida korak koji je u toku: shell komanda agenta se ubija zajedno sa podprocesima, svaki sledeći poziv alata
+se odbija, a sledeći poziv modela se prekida, pa se zadatak završava kao «cancelled» za nekoliko sekundi. Zahtev ka
+modelu koji je već poslat se ne prekida — prvo se završi (ili dostigne `LLM_TIMEOUT`). Vremensko ograničenje zaustavlja
+tim na isti način.
 
 > **`$` u vrednostima.** Compose razvija `$VAR` unutar `.env`. Ključ koji sadrži `$` mora biti u jednostrukim navodnicima:
 > `QA_API_KEY='$abc#def'`, inače se deo ključa tiho odbacuje.
