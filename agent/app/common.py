@@ -491,6 +491,8 @@ def run_command(command: str, timeout: float) -> tuple[int, str, str]:
     finally:
         with _shell_lock:
             _shell_procs.discard(p)
+    if not why and cancel_requested() and p.returncode != 0:
+        why = "cancelled"                       # request_cancel() killed it while we were waiting
     out = ((so or "") + ("\n" + se if se else "")).strip()
     code = {"timeout": 124, "cancelled": 130}.get(why, p.returncode if p.returncode is not None else -1)
     return code, out, why
