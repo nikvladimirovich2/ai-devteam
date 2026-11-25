@@ -92,46 +92,45 @@
 <header>
   <h1>🤖 AI DevTeam</h1>
   <div id="team"></div>
-  <button class="sec sm" id="setupBtn" style="margin-left:auto" onclick="openSetup()">⚙</button>
+  <button class="sec sm" id="langBtn" style="margin-left:auto" onclick="setLang(LANG === 'ru' ? 'en' : 'ru')" data-tt="lang_title"></button>
+  <button class="sec sm" id="setupBtn" onclick="openSetup()">⚙</button>
 </header>
 <main>
   <aside>
-    <div class="side-h">Tasks <span style="display:flex;gap:6px">
-      <button class="sec sm" onclick="toggleSel()" title="Select several tasks to delete">☑</button>
-      <button class="sec" onclick="newTask()">+ New</button></span></div>
+    <div class="side-h"><span data-t="tasks"></span> <span style="display:flex;gap:6px">
+      <button class="sec sm" onclick="toggleSel()" data-tt="sel_title">☑</button>
+      <button class="sec" onclick="newTask()" data-t="new_btn"></button></span></div>
     <div id="bulk">
-      <button class="sec sm" onclick="pickAll(true)">select all</button>
-      <button class="sec sm" onclick="pickAll(false)">clear</button>
-      <button class="sec sm" onclick="pickFailed()">select failed</button>
-      <button class="danger sm" onclick="deletePicked()">🗑 delete selected (<span id="pickN">0</span>)</button>
-      <button class="sec sm" onclick="toggleSel()">done</button>
+      <button class="sec sm" onclick="pickAll(true)" data-t="sel_all"></button>
+      <button class="sec sm" onclick="pickAll(false)" data-t="sel_clear"></button>
+      <button class="sec sm" onclick="pickFailed()" data-t="sel_failed"></button>
+      <button class="danger sm" onclick="deletePicked()">🗑 <span data-t="del_sel"></span> (<span id="pickN">0</span>)</button>
+      <button class="sec sm" onclick="toggleSel()" data-t="sel_done"></button>
     </div>
     <div id="tasks"></div>
   </aside>
   <section id="center">
-    <div id="head"><div id="title"><b>New task for the Team Lead</b></div><div class="stage" id="stage">
-      Describe the product: what it should do, constraints, preferred stack. The team plans it, designs it, writes the code,
-      tests it and pushes it to GitLab.</div></div>
+    <div id="head"><div id="title"></div><div class="stage" id="stage"></div></div>
     <div style="display:flex;flex-direction:column;min-height:0">
       <div class="filters">
-        <label><input type="checkbox" id="fDetail" checked onchange="rerender()"> agent details (thoughts, commands)</label>
-        <label><input type="checkbox" id="fAuto" checked> auto-scroll</label>
+        <label><input type="checkbox" id="fDetail" checked onchange="rerender()"> <span data-t="f_detail"></span></label>
+        <label><input type="checkbox" id="fAuto" checked> <span data-t="f_auto"></span></label>
       </div>
       <div id="log"></div>
     </div>
     <form id="f" onsubmit="send(event)">
-      <textarea id="prompt" placeholder="E.g.: Build a REST service + web page for managing a task list (CRUD, filters by status), with SQLite storage and tests."></textarea>
+      <textarea id="prompt"></textarea>
       <div style="display:flex;flex-direction:column;gap:6px">
-        <button id="sendBtn">Send to Team Lead</button>
+        <button id="sendBtn"></button>
         <button type="button" class="sec" id="demoBtn" onclick="demoTask()" data-t="demo_btn"></button>
-        <button type="button" class="sec" id="cancelBtn" onclick="cancelTask()" style="display:none">Stop</button>
-        <button type="button" class="sec" id="ciBtn" onclick="checkCi()" style="display:none" title="Check the pipeline status and fix errors automatically">🔧 CI</button>
-        <button type="button" class="sec" id="delBtn" onclick="cur && deleteTask(cur.id)" style="display:none" title="Delete this task">🗑 Delete</button>
+        <button type="button" class="sec" id="cancelBtn" onclick="cancelTask()" style="display:none" data-t="stop"></button>
+        <button type="button" class="sec" id="ciBtn" onclick="checkCi()" style="display:none" data-tt="ci_title">🔧 CI</button>
+        <button type="button" class="sec" id="delBtn" onclick="cur && deleteTask(cur.id)" style="display:none" data-t="delete" data-tt="del_title"></button>
       </div>
     </form>
   </section>
   <aside style="border-right:0">
-    <div class="side-h">Project files <button class="sec" onclick="loadFiles()">⟳</button></div>
+    <div class="side-h"><span data-t="files"></span> <button class="sec" onclick="loadFiles()" data-tt="reload">⟳</button></div>
     <div id="gl" style="padding:6px 14px"></div>
     <div id="files"></div>
     <div id="viewer" style="display:none"></div>
@@ -190,38 +189,42 @@
   </div>
 </div></div>
 <script>
-const ROLE_NAMES = {lead:"Team Lead", architect:"Architect", backend:"Backend", frontend:"Frontend", qa:"QA", devops:"DevOps", user:"You"};
-const STATUS = {queued:"queued", running:"running", done:"done", done_no_push:"done (no push)", ci_failed:"CI failed", failed:"failed", cancelled:"cancelled", interrupted:"interrupted"};
+const ROLE_KEYS = ["lead", "architect", "backend", "frontend", "qa", "devops"];
+const roleName = r => (T[LANG] || T.en)["r_" + r] || T.en["r_" + r] || r;
+const stName = s => (T[LANG] || T.en)["st_" + s] || T.en["st_" + s] || s;
 const DETAIL = new Set(["step","thought","shell","file","usage"]);
-let cur = null, es = null, events = [];
+let cur = null, es = null, events = [], TEAM = null;
 
 const $ = s => document.querySelector(s);
-const esc = s => (s ?? "").toString().replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+const esc = s => (s ?? "").toString().replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const fmtT = ts => new Date(ts * 1000).toLocaleTimeString();
 async function api(p, opt) { const r = await fetch(p, opt); if (!r.ok) throw new Error(await r.text()); return r.json(); }
 
 async function loadTeam() {
-  try {
-    const t = await api("/api/team");
-    $("#team").innerHTML = Object.entries(ROLE_NAMES).filter(([k]) => k !== "user").map(([k, n]) => {
-      const a = t[k] || {}; const cls = !a.ok ? "down" : a.busy ? "busy" : "ok";
-      return `<span class="agent" title="${a.task_id ? "busy: " + a.task_id : ""}"><span class="dot ${cls}"></span><span class="r-${k}">${n}</span></span>`;
-    }).join(" ");
-  } catch (e) {}
+  try { TEAM = await api("/api/team"); renderTeam(); } catch (e) {}
+}
+function renderTeam() {
+  if (!TEAM) return;
+  $("#team").innerHTML = ROLE_KEYS.map(k => {
+    const a = TEAM[k] || {}; const cls = !a.ok ? "down" : a.busy ? "busy" : "ok";
+    return `<span class="agent" title="${a.task_id ? esc(t("busy_title") + a.task_id) : ""}"><span class="dot ${cls}"></span><span class="r-${k}">${esc(roleName(k))}</span></span>`;
+  }).join(" ");
 }
 
 async function loadTasks() {
-  const ts = await api("/api/tasks");
-  TASKS = ts;
+  TASKS = await api("/api/tasks");
+  renderTasks();
+  if (cur) { const x = TASKS.find(x => x.id === cur.id); if (x) { cur = {...cur, ...x}; renderHead(); } }
+}
+function renderTasks() {
   const running = s => ["running", "queued"].includes(s);
-  $("#tasks").innerHTML = ts.map(t => `<div class="t ${cur && cur.id === t.id ? "sel" : ""}" onclick="taskClick(event,'${t.id}')">
-      ${running(t.status) ? "" : `<button class="del" title="Delete task" onclick="event.stopPropagation(); deleteTask('${t.id}')">🗑</button>`}
-      <div class="ttl"><input type="checkbox" class="pick" data-id="${t.id}" ${PICK.has(t.id) ? "checked" : ""}
-           ${running(t.status) ? "disabled title='running — cannot delete'" : ""}
-           onclick="event.stopPropagation(); pick('${t.id}', this.checked)">${esc(t.title)}</div>
-      <div class="meta"><span class="badge s-${t.status}">${STATUS[t.status] || t.status}</span> ${esc(t.project_name || "")}
-      <br>${new Date(t.created * 1000).toLocaleString()}</div></div>`).join("") || `<div class="t meta">No tasks yet</div>`;
-  if (cur) { const t = ts.find(x => x.id === cur.id); if (t) { cur = {...cur, ...t}; renderHead(); } }
+  $("#tasks").innerHTML = TASKS.map(x => `<div class="t ${cur && cur.id === x.id ? "sel" : ""}" onclick="taskClick(event,'${x.id}')">
+      ${running(x.status) ? "" : `<button class="del" title="${esc(t("del_task_title"))}" onclick="event.stopPropagation(); deleteTask('${x.id}')">🗑</button>`}
+      <div class="ttl"><input type="checkbox" class="pick" data-id="${x.id}" ${PICK.has(x.id) ? "checked" : ""}
+           ${running(x.status) ? `disabled title="${esc(t("running_nodel"))}"` : ""}
+           onclick="event.stopPropagation(); pick('${x.id}', this.checked)">${esc(x.title)}</div>
+      <div class="meta"><span class="badge s-${x.status}">${esc(stName(x.status))}</span> ${esc(x.project_name || "")}
+      <br>${new Date(x.created * 1000).toLocaleString()}</div></div>`).join("") || `<div class="t meta">${esc(t("no_tasks"))}</div>`;
 }
 
 let TASKS = [], PICK = new Set();
@@ -245,33 +248,38 @@ async function afterDelete(ids) {
   PICK.clear(); $("#pickN").textContent = 0; await loadTasks();
 }
 async function deleteTask(id) {
-  const t = TASKS.find(x => x.id === id);
-  if (!confirm(`Delete task «${t ? t.title : id}»?\nIts history and working files on the server will be deleted.\nThe repository in GitLab/GitHub is NOT touched.`)) return;
+  const x = TASKS.find(x => x.id === id);
+  if (!confirm(tf("del_confirm", x ? x.title : id))) return;
   try { await fetch(`/api/tasks/${id}`, {method: "DELETE"}).then(r => { if (!r.ok) return r.text().then(x => { throw new Error(x); }); });
         await afterDelete([id]); } catch (e) { alert(e.message); }
 }
 async function deletePicked() {
   if (!PICK.size) return;
-  if (!confirm(`Delete selected tasks: ${PICK.size}?\nThe history and working files will be deleted. Repositories in GitLab/GitHub are NOT touched.`)) return;
+  if (!confirm(tf("del_many_confirm", PICK.size))) return;
   try { const r = await api("/api/tasks/delete", {method: "POST", headers: {"Content-Type": "application/json"},
                                                    body: JSON.stringify({ids: [...PICK]})});
-        if (r.skipped_running.length) alert("Skipped (running): " + r.skipped_running.join(", "));
+        if (r.skipped_running.length) alert(t("skipped_running") + r.skipped_running.join(", "));
         await afterDelete(r.deleted); } catch (e) { alert(e.message); }
 }
 
 function renderHead() {
-  if (!cur) return;
-  $("#title").innerHTML = `<b>${esc(cur.title)}</b> <span class="badge s-${cur.status}">${STATUS[cur.status] || cur.status}</span>`;
-  $("#stage").textContent = `stage: ${cur.stage || "-"}   ·   ${cur.project_name || ""}   ·   ${cur.id}`;
+  if (!cur) {     // a new task
+    $("#title").innerHTML = `<b>${esc(t("new_title"))}</b>`; $("#stage").textContent = t("new_stage");
+    $("#cancelBtn").style.display = "none"; $("#delBtn").style.display = "none"; $("#ciBtn").style.display = "none";
+    $("#demoBtn").style.display = "";
+    $("#sendBtn").textContent = t("send_new"); $("#prompt").placeholder = t("ph_new"); $("#gl").innerHTML = "";
+    return;
+  }
+  $("#title").innerHTML = `<b>${esc(cur.title)}</b> <span class="badge s-${cur.status}">${esc(stName(cur.status))}</span>`;
+  $("#stage").textContent = `${t("stage_lbl")}: ${cur.stage || "-"}   ·   ${cur.project_name || ""}   ·   ${cur.id}`;
   const running = ["running", "queued"].includes(cur.status);
   $("#cancelBtn").style.display = running ? "" : "none";
   $("#delBtn").style.display = running ? "none" : "";
   $("#demoBtn").style.display = "none";
   $("#ciBtn").style.display = (!running && cur.gitlab_url) ? "" : "none";
-  $("#sendBtn").textContent = cur ? "Send revision" : "Send to Team Lead";
+  $("#sendBtn").textContent = t("send_rev");
   $("#sendBtn").disabled = running;
-  $("#prompt").placeholder = running ? "The team is working… wait for it to finish, then you can send a revision"
-                                      : "Revision / new request for this project (the team will change the existing code)";
+  $("#prompt").placeholder = running ? t("ph_running") : t("ph_rev");
   $("#gl").innerHTML = cur.gitlab_url ? `🦊 <a href="${esc(cur.gitlab_url)}" target="_blank">${esc(cur.gitlab_url)}</a>` : "";
 }
 
@@ -279,8 +287,8 @@ function evHTML(e) {
   const k = e.kind, r = e.role;
   let extra = "";
   if (k === "gitlab" && e.extra && e.extra.web_url) extra = `\n<a href="${esc(e.extra.web_url)}" target="_blank">${esc(e.extra.web_url)}</a>`;
-  if (k === "report") extra = `\n<button class="sec sm" onclick="copyReport(${e.id})">📋 copy</button> <button class="sec sm" onclick="downloadReport(${e.id})">⬇ .txt</button>`;
-  return `<div class="ev ${r} k-${k}"><div class="h"><b class="r-${r}">${ROLE_NAMES[r] || r}</b> · ${k} · ${fmtT(e.ts)}</div>${esc(e.message)}${extra}</div>`;
+  if (k === "report") extra = `\n<button class="sec sm" onclick="copyReport(${e.id})">${esc(t("copy"))}</button> <button class="sec sm" onclick="downloadReport(${e.id})">⬇ .txt</button>`;
+  return `<div class="ev ${r} k-${k}"><div class="h"><b class="r-${r}">${esc(roleName(r))}</b> · ${k} · ${fmtT(e.ts)}</div>${esc(e.message)}${extra}</div>`;
 }
 function rerender() {
   const detail = $("#fDetail").checked;
@@ -309,7 +317,7 @@ async function loadFiles() {
   if (!cur) { $("#files").innerHTML = ""; return; }
   const fs = await api(`/api/tasks/${cur.id}/files`);
   $("#files").innerHTML = fs.map(f => `<div class="f" onclick="viewFile('${encodeURIComponent(f.path)}')">${esc(f.path)} <span style="opacity:.5">${f.size}</span></div>`).join("")
-                          || `<div class="f">(empty for now)</div>`;
+                          || `<div class="f">${esc(t("files_empty"))}</div>`;
 }
 async function viewFile(p) {
   const f = await api(`/api/tasks/${cur.id}/file?path=${p}`);
@@ -318,10 +326,8 @@ async function viewFile(p) {
 
 function newTask() {
   cur = null; events = []; if (es) es.close(); es = null;
-  $("#title").innerHTML = "<b>New task for the Team Lead</b>"; $("#stage").textContent = "Describe the product you need.";
-  $("#log").innerHTML = ""; $("#files").innerHTML = ""; $("#gl").innerHTML = ""; $("#viewer").style.display = "none";
-  $("#cancelBtn").style.display = "none"; $("#delBtn").style.display = "none"; $("#demoBtn").style.display = ""; $("#sendBtn").disabled = false; $("#sendBtn").textContent = "Send to Team Lead";
-  $("#prompt").placeholder = "E.g.: Build a REST service + web page for managing a task list…"; loadTasks();
+  $("#log").innerHTML = ""; $("#files").innerHTML = ""; $("#viewer").style.display = "none";
+  $("#sendBtn").disabled = false; renderHead(); loadTasks();
 }
 
 async function send(ev) {
@@ -339,7 +345,7 @@ async function send(ev) {
   }
 }
 function reportText(id) { const e = events.find(x => x.id === id); return e ? e.message : ""; }
-function copyReport(id) { navigator.clipboard.writeText(reportText(id)).then(() => {}, () => alert("Copying is not available (needs https/localhost)")); }
+function copyReport(id) { navigator.clipboard.writeText(reportText(id)).then(() => {}, () => alert(t("copy_na"))); }
 function downloadReport(id) {
   const a = document.createElement("a");
   a.href = URL.createObjectURL(new Blob([reportText(id)], {type: "text/plain;charset=utf-8"}));
@@ -386,10 +392,9 @@ async function checkCi() {
   try { await api(`/api/tasks/${cur.id}/ci`, {method: "POST"}); await loadTasks(); renderHead(); }
   catch (e) { alert(e.message); }
 }
-async function cancelTask() { if (cur && confirm("Stop the team's work on this task?")) await api(`/api/tasks/${cur.id}/cancel`, {method:"POST"}); }
+async function cancelTask() { if (cur && confirm(t("cancel_confirm"))) await api(`/api/tasks/${cur.id}/cancel`, {method:"POST"}); }
 
 $("#prompt").addEventListener("keydown", e => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) send(e); });
-loadTeam(); loadTasks(); setInterval(loadTeam, 4000); setInterval(loadTasks, 8000);
 
 // ---------------------------------------------------------------- setup wizard
 
@@ -404,7 +409,7 @@ const ROLE_TIPS = {
 function renderRoles() {
   const R = SETUP.roles || {};
   $("#rolesList").innerHTML = Object.keys(R).map(r => `<div class="role">
-      <span class="rn r-${r}">${ROLE_NAMES[r]}</span>
+      <span class="rn r-${r}">${esc(roleName(r))}</span>
       <input id="rm_${r}" list="sModels" placeholder="${esc(t("team_model"))}" value="${esc(R[r].model || "")}" ${R[r].from_env ? "disabled" : ""}>
       <input id="rk_${r}" type="password" autocomplete="off" placeholder="${esc(R[r].own_key ? "•••• (" + t("own_key") + ")" : t("team_key"))}" ${R[r].from_env ? "disabled" : ""}>
       <button class="sec sm" type="button" onclick="saveRole('${r}')" ${R[r].from_env ? "disabled" : ""}>${esc(t("check_save"))}</button>
@@ -437,7 +442,28 @@ const T = {
        base_local:"Сервер на этом же компьютере: можно писать localhost — адрес сам заменится на адрес компьютера. Сервер должен слушать 0.0.0.0 (Ollama: OLLAMA_HOST=0.0.0.0) и быть разрешён в брандмауэре.",
        s_roles:"Модели по ролям (необязательно)", roles_help:"По умолчанию все агенты работают на модели команды. Здесь можно дать роли другую модель того же провайдера, например сильную архитектору и QA, а дешёвую — тимлиду. Пустое поле = модель команды.",
        team_model:"модель команды", team_key:"ключ команды", own_key:"свой ключ", now:"сейчас",
-       demo_btn:"🎲 Пример задания"},
+       demo_btn:"🎲 Пример задания",
+       // main screen
+       tasks:"Задачи", sel_title:"Выбрать несколько задач для удаления", new_btn:"+ Новая", sel_all:"выбрать все",
+       sel_clear:"снять выбор", sel_failed:"выбрать неудачные", del_sel:"удалить выбранные", sel_done:"готово",
+       new_title:"Новая задача для тимлида",
+       new_stage:"Опишите продукт: что он должен делать, ограничения, желаемый стек. Команда спланирует и спроектирует его, напишет код, протестирует и опубликует в GitHub/GitLab.",
+       f_detail:"подробности работы агентов (мысли, команды)", f_auto:"автопрокрутка",
+       send_new:"Отправить тимлиду", send_rev:"Отправить доработку", stop:"Стоп",
+       ci_title:"Проверить статус пайплайна и автоматически исправить ошибки", delete:"🗑 Удалить", del_title:"Удалить эту задачу",
+       files:"Файлы проекта", reload:"Обновить", lang_title:"Язык интерфейса / Language",
+       ph_new:"Например: сделай REST-сервис и веб-страницу для управления списком задач (CRUD, фильтр по статусу), хранение в SQLite, с тестами.",
+       ph_running:"Команда работает… дождитесь окончания, потом можно отправить доработку",
+       ph_rev:"Доработка / новый запрос по этому проекту (команда изменит существующий код)",
+       stage_lbl:"этап", no_tasks:"Задач пока нет", files_empty:"(пока пусто)", busy_title:"занят: ",
+       del_task_title:"Удалить задачу", running_nodel:"выполняется — удалить нельзя",
+       del_confirm:"Удалить задачу «{0}»?\nЕё история и рабочие файлы на сервере будут удалены.\nРепозиторий в GitLab/GitHub НЕ затрагивается.",
+       del_many_confirm:"Удалить выбранные задачи: {0}?\nИстория и рабочие файлы будут удалены. Репозитории в GitLab/GitHub НЕ затрагиваются.",
+       skipped_running:"Пропущены (выполняются): ", cancel_confirm:"Остановить работу команды над этой задачей?",
+       copy:"📋 копировать", copy_na:"Копирование недоступно (нужен https или localhost)",
+       r_lead:"Тимлид", r_architect:"Архитектор", r_backend:"Бэкенд", r_frontend:"Фронтенд", r_qa:"QA", r_devops:"DevOps", r_user:"Вы",
+       st_queued:"в очереди", st_running:"выполняется", st_done:"готово", st_done_no_push:"готово (без публикации)",
+       st_ci_failed:"CI не прошёл", st_failed:"ошибка", st_cancelled:"остановлена", st_interrupted:"прервана"},
   en: {setup_title:"Setup", setup_lead:"Three steps: the AI model, where to publish the projects and a password. Keys stay on this server.",
        s1:"1. AI model", s1_help:"Pick the provider, paste the key and choose a model. The model must support tool calling.",
        provider:"Provider", api_key:"API key", get_key:"get a key ↗", base_url:"Model server address", model:"Model",
@@ -455,15 +481,42 @@ const T = {
        base_local:"A server on this same computer: localhost is fine, it is replaced by the computer's address automatically. The server must listen on 0.0.0.0 (Ollama: OLLAMA_HOST=0.0.0.0) and be allowed in the firewall.",
        s_roles:"Models per role (optional)", roles_help:"By default every agent uses the team's model. Here a role can get another model of the same provider, e.g. a strong one for the architect and QA and a cheap one for the lead. Empty = the team's model.",
        team_model:"the team's model", team_key:"the team's key", own_key:"own key", now:"now",
-       demo_btn:"🎲 Example task"},
+       demo_btn:"🎲 Example task",
+       // main screen
+       tasks:"Tasks", sel_title:"Select several tasks to delete", new_btn:"+ New", sel_all:"select all",
+       sel_clear:"clear", sel_failed:"select failed", del_sel:"delete selected", sel_done:"done",
+       new_title:"New task for the Team Lead",
+       new_stage:"Describe the product: what it should do, constraints, preferred stack. The team plans it, designs it, writes the code, tests it and publishes it to GitHub/GitLab.",
+       f_detail:"agent details (thoughts, commands)", f_auto:"auto-scroll",
+       send_new:"Send to Team Lead", send_rev:"Send revision", stop:"Stop",
+       ci_title:"Check the pipeline status and fix errors automatically", delete:"🗑 Delete", del_title:"Delete this task",
+       files:"Project files", reload:"Reload", lang_title:"Interface language / Язык",
+       ph_new:"E.g.: Build a REST service + web page for managing a task list (CRUD, filters by status), with SQLite storage and tests.",
+       ph_running:"The team is working… wait for it to finish, then you can send a revision",
+       ph_rev:"Revision / new request for this project (the team will change the existing code)",
+       stage_lbl:"stage", no_tasks:"No tasks yet", files_empty:"(empty for now)", busy_title:"busy: ",
+       del_task_title:"Delete task", running_nodel:"running — cannot delete",
+       del_confirm:"Delete task «{0}»?\nIts history and working files on the server will be deleted.\nThe repository in GitLab/GitHub is NOT touched.",
+       del_many_confirm:"Delete selected tasks: {0}?\nThe history and working files will be deleted. Repositories in GitLab/GitHub are NOT touched.",
+       skipped_running:"Skipped (running): ", cancel_confirm:"Stop the team's work on this task?",
+       copy:"📋 copy", copy_na:"Copying is not available (needs https/localhost)",
+       r_lead:"Team Lead", r_architect:"Architect", r_backend:"Backend", r_frontend:"Frontend", r_qa:"QA", r_devops:"DevOps", r_user:"You",
+       st_queued:"queued", st_running:"running", st_done:"done", st_done_no_push:"done (no push)",
+       st_ci_failed:"CI failed", st_failed:"failed", st_cancelled:"cancelled", st_interrupted:"interrupted"},
 };
 let LANG = (localStorage.getItem("lang") || (navigator.language || "en")).toLowerCase().startsWith("ru") ? "ru" : "en";
 let SETUP = null;
-const t = k => (T[LANG] || T.en)[k] || k;
+const t = k => (T[LANG] || T.en)[k] ?? T.en[k] ?? k;
+const tf = (k, ...a) => t(k).replace(/\{(\d+)\}/g, (_, i) => a[+i] ?? "");
 function applyLang() {
+  document.documentElement.lang = LANG;
   document.querySelectorAll("[data-t]").forEach(el => el.textContent = t(el.dataset.t));
+  document.querySelectorAll("[data-tt]").forEach(el => el.title = t(el.dataset.tt));
   $("#sLang").value = LANG; $("#setupBtn").textContent = t("settings"); gitChanged(true);
+  $("#langBtn").innerHTML = LANG === "ru" ? "<b>RU</b> · EN" : "RU · <b>EN</b>";
   if (SETUP) renderRoles();
+  // the main screen
+  renderTeam(); renderTasks(); renderHead(); rerender();
 }
 function setLang(l) { LANG = l; localStorage.setItem("lang", l); applyLang(); post("/api/setup/ui", {lang: l}).catch(() => {}); }
 async function post(p, body) { return api(p, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)}); }
@@ -554,6 +607,7 @@ async function saveUI() {
 }
 (async () => {
   applyLang();
+  loadTeam(); loadTasks(); setInterval(loadTeam, 4000); setInterval(loadTasks, 8000);
   try { const s = await api("/api/setup"); if (!s.llm.configured || !(s.git || {}).configured) openSetup(); } catch (e) {}
 })();
 </script>

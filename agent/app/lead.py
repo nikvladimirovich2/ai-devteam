@@ -346,6 +346,29 @@ def _dur(sec: float) -> str:
     return f"{h}h {m:02d}m {s_:02d}s" if h else f"{m}m {s_:02d}s"
 
 
+# Report headings in the interface language (⚙ Setup → language, UI_LANG). Role names stay as they are.
+REPORT_T = {
+    "en": {"report": "REPORT", "status": "Status", "duration": "Duration", "repo": "Repository",
+           "not_published": "not published", "commits": "Commits", "commits_v": "{n} (last {sha}, branch {branch})",
+           "done": "DONE:", "no_stages": "(no completed stages)", "tests": "TESTS:",
+           "runs": "Test runs: {n} (last 8):", "no_tests": "(no tests were run)", "not_checked": "(not checked)",
+           "errors": "ERRORS", "files": "FILES IN PROJECT", "tokens": "TOKENS:",
+           "cols": ("role", "calls", "requests", "input", "output", "total", "model"), "total": "TOTAL",
+           "whole": "Whole task (all runs incl. revisions): {n} tokens",
+           "no_usage": "(the provider did not return token counts)", "st": {}},
+    "ru": {"report": "ОТЧЁТ", "status": "Статус", "duration": "Длительность", "repo": "Репозиторий",
+           "not_published": "не опубликован", "commits": "Коммиты", "commits_v": "{n} (последний {sha}, ветка {branch})",
+           "done": "СДЕЛАНО:", "no_stages": "(нет завершённых этапов)", "tests": "ТЕСТЫ:",
+           "runs": "Запусков тестов: {n} (последние 8):", "no_tests": "(тесты не запускались)", "not_checked": "(не проверялся)",
+           "errors": "ОШИБКИ", "files": "ФАЙЛОВ В ПРОЕКТЕ", "tokens": "ТОКЕНЫ:",
+           "cols": ("роль", "вызовы", "запросы", "вход", "выход", "всего", "модель"), "total": "ИТОГО",
+           "whole": "Вся задача (все запуски, включая доработки): {n} токенов",
+           "no_usage": "(провайдер не вернул число токенов)",
+           "st": {"queued": "в очереди", "running": "выполняется", "done": "готово", "done_no_push": "готово (без публикации)",
+                  "ci_failed": "CI не прошёл", "failed": "ошибка", "cancelled": "остановлена", "interrupted": "прервана"}},
+}
+
+
 def build_report(task_id: str, since_event: int = 0) -> str:
     """Plain-text report: what was done, tests, CI, files, tokens per role. Facts from events only."""
     t = get_task(task_id)
@@ -403,52 +426,56 @@ def build_report(task_id: str, since_event: int = 0) -> str:
     except Exception:
         pass
 
+    H = REPORT_T[ui_lang()]
+    st = t["status"]
     L = []
     L.append("=" * 64)
-    L.append(f"REPORT · {t['project_name'] or t['title'][:50]} · {task_id}")
+    L.append(f"{H['report']} · {t['project_name'] or t['title'][:50]} · {task_id}")
     L.append("=" * 64)
-    L.append(f"Status:       {t['status']}")
-    L.append(f"Duration:     {_dur(t1 - t0)}")
-    L.append(f"Repository:   {t['gitlab_url'] or 'not published'}")
+    L.append(f"{H['status'] + ':':<14}" + (f"{H['st'][st]} ({st})" if st in H["st"] else st))
+    L.append(f"{H['duration'] + ':':<14}{_dur(t1 - t0)}")
+    L.append(f"{H['repo'] + ':':<14}{t['gitlab_url'] or H['not_published']}")
     if pushes:
-        L.append(f"Commits:      {len(pushes)} (last {pushes[-1].get('commit', '')[:10]}, branch {pushes[-1].get('branch', '')})")
+        L.append(f"{H['commits'] + ':':<14}" + H["commits_v"].format(n=len(pushes), sha=pushes[-1].get('commit', '')[:10],
+                                                                    branch=pushes[-1].get('branch', '')))
     L.append("")
-    L.append("DONE:")
+    L.append(H["done"])
     for s_ in stages:
         L.append(f"  - {s_}")
     if not stages:
-        L.append("  (no completed stages)")
+        L.append("  " + H["no_stages"])
     L.append("")
-    L.append("TESTS:")
+    L.append(H["tests"])
     if qa:
         for e in qa:
             L.append("  " + e["message"].split("\n")[0] + (" — " + e["message"].split("\n", 1)[1][:200].replace("\n", " ")
                                                          if "\n" in e["message"] else ""))
     if tests:
-        L.append(f"  Test runs: {len(tests)} (last 8):")
+        L.append("  " + H["runs"].format(n=len(tests)))
         for x in tests[-8:]:
             L.append(f"    {x}")
     if not qa and not tests:
-        L.append("  (no tests were run)")
+        L.append("  " + H["no_tests"])
     L.append("")
     L.append("CI:")
     if ci:
         for e in ci:
             L.append("  " + e["message"].split("\n")[0])
     else:
-        L.append("  (not checked)")
+        L.append("  " + H["not_checked"])
     if errors:
         L.append("")
-        L.append(f"ERRORS ({len(errors)}):")
+        L.append(f"{H['errors']} ({len(errors)}):")
         for x in errors[-5:]:
             L.append(f"  - {x}")
     L.append("")
-    L.append(f"FILES IN PROJECT: {len(files)}")
+    L.append(f"{H['files']}: {len(files)}")
     if files:
         L.append("  " + ", ".join(files[:25]) + (" …" if len(files) > 25 else ""))
     L.append("")
-    L.append("TOKENS:")
-    L.append(f"  {'role':<11}{'calls':>7}{'requests':>10}{'input':>13}{'output':>12}{'total':>13}   model")
+    L.append(H["tokens"])
+    c = H["cols"]
+    L.append(f"  {c[0]:<11}{c[1]:>7}{c[2]:>10}{c[3]:>13}{c[4]:>12}{c[5]:>13}   {c[6]}")
     for role in ("lead", "architect", "backend", "frontend", "qa", "devops"):
         if role in per:
             r = per[role]
@@ -456,14 +483,14 @@ def build_report(task_id: str, since_event: int = 0) -> str:
                      f"{_fmt(r['prompt_tokens']):>13}{_fmt(r['completion_tokens']):>12}{_fmt(r['total_tokens']):>13}"
                      f"   {', '.join(r['models']) or '-'}")
     L.append(f"  {'-' * 64}")
-    L.append(f"  {'TOTAL':<11}{tot['calls']:>7}{tot['successful_requests']:>10}"
+    L.append(f"  {H['total']:<11}{tot['calls']:>7}{tot['successful_requests']:>10}"
              f"{_fmt(tot['prompt_tokens']):>13}{_fmt(tot['completion_tokens']):>12}{_fmt(tot['total_tokens']):>13}")
     if since_event:
         allu = [json.loads(r["extra"] or "{}").get("usage", {}) for r in
                 q("SELECT extra FROM events WHERE task_id=? AND kind='usage'", (task_id,))]
-        L.append(f"  Whole task (all runs incl. revisions): {_fmt(sum(int(u.get('total_tokens') or 0) for u in allu))} tokens")
+        L.append("  " + H["whole"].format(n=_fmt(sum(int(u.get('total_tokens') or 0) for u in allu))))
     if not per:
-        L.append("  (the provider did not return token counts)")
+        L.append("  " + H["no_usage"])
     L.append("=" * 64)
     return "\n".join(L)
 

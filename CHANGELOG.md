@@ -2,6 +2,14 @@
 
 Format: [Keep a Changelog](https://keepachangelog.com/), versions: [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- The whole interface is in English and Russian, not only the setup wizard: task list, buttons, statuses, filters,
+  placeholders, confirmations, the bulk-delete bar, the stage line and the role names. A RU · EN switch in the header
+  changes the language at once (the same setting as in ⚙ Setup). The headings of the plain-text report follow the
+  interface language too (the messages of the agents in the feed stay in English).
+
 ## [0.2.4] - 2026-11-23
 
 ### Added
