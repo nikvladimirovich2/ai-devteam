@@ -204,6 +204,18 @@
     <div class="st" id="s4st"></div>
   </div>
 
+  <div class="step"><h3><span data-t="s_notify"></span> <span class="done" id="d5"></span></h3>
+    <p class="lead" data-t="notify_help"></p>
+    <label><span data-t="tg_token"></span> <a href="https://t.me/BotFather" target="_blank">@BotFather ↗</a></label>
+    <input id="nTgToken" type="password" autocomplete="off">
+    <label data-t="tg_chat"></label><input id="nTgChat" placeholder="123456789 / -100…">
+    <label data-t="webhook"></label><input id="nHook" type="password" autocomplete="off" placeholder="https://…">
+    <div class="row"><button class="sec" type="button" onclick="saveNotify('save')" data-t="save"></button>
+      <button class="sec" type="button" onclick="saveNotify('test')" data-t="send_test"></button>
+      <button class="sec" type="button" onclick="saveNotify('off')" data-t="notify_off"></button></div>
+    <div class="st" id="s5st"></div>
+  </div>
+
   <div class="row" style="justify-content:flex-end;margin-top:18px">
     <button class="sec" type="button" onclick="closeSetup()" data-t="close"></button>
   </div>
@@ -554,7 +566,7 @@ async function saveRole(r) {
   } catch (e) { status("#rs_" + r, "bad", e.message); }
 }
 const T = {
-  ru: {setup_title:"Настройка", setup_lead:"Три шага: модель ИИ, куда публиковать проекты и пароль. Ключи хранятся только на этом сервере.",
+  ru: {setup_title:"Настройка", setup_lead:"Три шага: модель ИИ, куда публиковать проекты и пароль. Ключи хранятся только на этом сервере. Ограничения и уведомления ниже — по желанию.",
        s1:"1. Модель ИИ", s1_help:"Выберите провайдера, вставьте ключ и выберите модель. Нужна модель, которая умеет вызывать инструменты.",
        provider:"Провайдер", api_key:"API-ключ", get_key:"получить ключ ↗", base_url:"Адрес сервера модели", model:"Модель",
        load_models:"Загрузить список моделей", check_save:"Проверить и сохранить", save:"Сохранить", close:"Закрыть",
@@ -600,8 +612,15 @@ const T = {
        limits_help:"Сколько может стоить один запуск задачи (новая задача или доработка). Когда лимит исчерпан, тимлид останавливает команду и пишет итог со ссылкой на репозиторий. Цены — из таблицы LiteLLM; локальные модели и модели с неизвестной ценой считаются бесплатными, но их токены учитываются. Лимит проверяется между шагами агентов, поэтому последний шаг может немного его превысить. Пусто = без ограничений.",
        budget_usd:"Бюджет на запуск, долларов США", budget_tokens:"Бюджет на запуск, токенов", no_limit:"без ограничений",
        time_limit:"Лимит времени на запуск, минут (по умолчанию 180, 0 = без ограничений): потом команда останавливается",
-       st_timeout:"лимит времени"},
-  en: {setup_title:"Setup", setup_lead:"Three steps: the AI model, where to publish the projects and a password. Keys stay on this server.",
+       st_timeout:"лимит времени",
+       s_notify:"5. Уведомления (необязательно)",
+       notify_help:"Когда запуск задачи закончится (готово, ошибка, CI, бюджет или лимит времени), придёт сообщение: название, статус, ссылка на репозиторий, стоимость и краткий итог. Telegram: создайте бота у @BotFather и вставьте его токен; chat id — ваш ID (его покажет @userinfobot) или ID группы, куда добавлен бот; сначала напишите боту /start. Вебхук: адрес, на который придёт POST с JSON (подходит Slack, Mattermost, n8n). Ошибка отправки не ломает задачу — она видна в ленте задачи.",
+       tg_token:"Токен Telegram-бота", tg_chat:"Chat ID в Telegram", webhook:"Адрес вебхука (POST JSON)",
+       send_test:"Отправить тест", notify_off:"Отключить", notify_off_confirm:"Отключить уведомления и удалить их настройки?",
+       saved_secret:"сохранён", notify_sent:"Тест отправлен.", notify_failed:"Не удалось отправить:",
+       notify_none:"Нечего отправлять: заполните Telegram (токен и chat id) или вебхук.",
+       notify_bad_url:"Адрес вебхука должен начинаться с http:// или https://", notify_offed:"Уведомления отключены."},
+  en: {setup_title:"Setup", setup_lead:"Three steps: the AI model, where to publish the projects and a password. Keys stay on this server. Limits and notifications below are optional.",
        s1:"1. AI model", s1_help:"Pick the provider, paste the key and choose a model. The model must support tool calling.",
        provider:"Provider", api_key:"API key", get_key:"get a key ↗", base_url:"Model server address", model:"Model",
        load_models:"Load the model list", check_save:"Check and save", save:"Save", close:"Close",
@@ -647,7 +666,14 @@ const T = {
        limits_help:"How much one run of a task (a new task or a revision) may cost. When the limit is used up, the Team Lead stops the team and writes a final message with the repository link. Prices come from LiteLLM's table; local models and models without a known price count as free, but their tokens still count. The limit is checked between the agents' steps, so the last step may go a little over it. Empty = no limit.",
        budget_usd:"Budget per run, US dollars", budget_tokens:"Budget per run, tokens", no_limit:"no limit",
        time_limit:"Time limit per run, minutes (default 180, 0 = no limit): then the team is stopped",
-       st_timeout:"time limit"},
+       st_timeout:"time limit",
+       s_notify:"5. Notifications (optional)",
+       notify_help:"When a task run ends (done, error, CI, budget or time limit) you get a message: the title, the status, the repository link, the cost and a short summary. Telegram: create a bot with @BotFather and paste its token; the chat id is your ID (@userinfobot shows it) or the ID of a group the bot is in; write /start to the bot first. Webhook: an address that gets a POST with JSON (works with Slack, Mattermost, n8n). A failed notification does not break the task — it is shown in the task's feed.",
+       tg_token:"Telegram bot token", tg_chat:"Telegram chat ID", webhook:"Webhook URL (POST JSON)",
+       send_test:"Send test", notify_off:"Turn off", notify_off_confirm:"Turn the notifications off and delete their settings?",
+       saved_secret:"saved", notify_sent:"Test sent.", notify_failed:"Could not send:",
+       notify_none:"Nothing to send to: fill in Telegram (token and chat id) or the webhook.",
+       notify_bad_url:"The webhook URL must start with http:// or https://", notify_offed:"Notifications are off."},
 };
 let LANG = (localStorage.getItem("lang") || (navigator.language || "en")).toLowerCase().startsWith("ru") ? "ru" : "en";
 let SETUP = null;
@@ -688,7 +714,7 @@ async function openSetup() {
   $("#d2").textContent = g.configured ? t("ready") + (g.from_env ? " · " + t("from_env") : "") : "";
   $("#d3").textContent = SETUP.ui.password_set ? t("ready") + (SETUP.ui.from_env ? " · " + t("from_env") : "") : "";
   if (SETUP.ui.user) $("#uUser").value = SETUP.ui.user;
-  fillLimits();
+  fillLimits(); fillNotify();
   renderRoles();
   applyLang(); $("#setup").classList.add("open");
 }
@@ -759,6 +785,32 @@ async function saveLimits() {
                                                         time_limit_min: $("#lTime").value});
         fillLimits(); status("#s4st", "ok", t("saved")); }
   catch (e) { status("#s4st", "bad", e.message); }
+}
+function fillNotify() {
+  const N = SETUP.notify || {}, E = N.from_env || {};
+  $("#nTgToken").value = ""; $("#nHook").value = "";
+  $("#nTgToken").placeholder = N.has_token ? t("saved_secret") : "123456789:AA…";
+  $("#nTgChat").value = N.telegram_chat_id || "";
+  $("#nHook").placeholder = N.webhook ? `•••• (${N.webhook_host || t("saved_secret")})` : "https://…";
+  $("#nTgToken").disabled = !!E.telegram_token; $("#nTgChat").disabled = !!E.telegram_chat_id; $("#nHook").disabled = !!E.webhook_url;
+  const on = [N.telegram && "Telegram", N.webhook && "webhook"].filter(Boolean);
+  $("#d5").textContent = on.length ? t("ready") + " · " + on.join(", ") : "";
+}
+async function saveNotify(action) {
+  if (action === "off" && !confirm(t("notify_off_confirm"))) return;
+  status("#s5st", "wait", t("checking"));
+  try {
+    const r = await post("/api/setup/notify", {action, telegram_token: $("#nTgToken").value, telegram_chat_id: $("#nTgChat").value,
+                                               webhook_url: $("#nHook").value, lang: LANG});
+    if (r.code === "missing") return status("#s5st", "bad", t("notify_none"));
+    if (r.code === "bad_url") return status("#s5st", "bad", t("notify_bad_url"));
+    if (action === "test") {
+      const lines = Object.entries(r.results || {}).map(([c, e]) => `${c}: ${e ? "✖ " + e : "✓"}`).join("\n");
+      return status("#s5st", r.ok ? "ok" : "bad", (r.ok ? t("notify_sent") : t("notify_failed")) + "\n" + lines);
+    }
+    SETUP.notify = r; fillNotify();
+    status("#s5st", "ok", action === "off" ? t("notify_offed") : t("saved"));
+  } catch (e) { status("#s5st", "bad", e.message); }
 }
 async function saveUI() {
   const pw = $("#uPass").value;

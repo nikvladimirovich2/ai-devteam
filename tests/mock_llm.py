@@ -87,6 +87,20 @@ async def chat(req: Request):
     return reply(final if body.get("tools") else f"Thought: done\nFinal Answer: {final}")
 
 
+HOOKS: list = []      # notifications received by the fake webhook (smoke test)
+
+
+@app.post("/hook")
+async def hook(req: Request):
+    HOOKS.append(await req.json())
+    return {"ok": True}
+
+
+@app.get("/hooks")
+def hooks():
+    return HOOKS
+
+
 @app.get("/v1/models")
 def models():
     return {"data": [{"id": "mock", "object": "model"}]}

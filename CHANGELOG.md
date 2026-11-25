@@ -22,6 +22,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versions: [SemVer](http
   the task ends as «cancelled» within seconds. A model request already in flight finishes first (`LLM_TIMEOUT`).
 - Total time limit of a task run: `TASK_TIME_LIMIT_MIN` (default 180, 0 = none; also in ⚙ Setup → Limits), then the
   team is stopped with the status «time limit» and a message with the repository link.
+- Notifications when a task run ends: Telegram (`NOTIFY_TELEGRAM_TOKEN` + `NOTIFY_TELEGRAM_CHAT_ID`) and a generic
+  webhook (`NOTIFY_WEBHOOK_URL`, POST JSON with the status, repository link, cost, summary and report; `text` for
+  Slack / Mattermost), also in ⚙ Setup → Notifications with «Send test». The secrets stay in the lead and are never
+  sent to the browser; a failed notification is shown in the task's feed and does not break the task.
 
 ### Fixed
 - `SHELL_TIMEOUT` really stops a hanging command: before, only `sudo` was killed and the command itself could keep running. Now

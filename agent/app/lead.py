@@ -34,6 +34,7 @@ from crewai import Agent, Crew, Process, Task
 from common import (WORKSPACE, build_llm, env, env_bool, extract_json, install_cancel_hooks, model_of, internal_headers,
                     require_secret, set_overrides, token_ok, ui_lang)
 import budget
+import notify
 import setup_checks
 from roles import ROLES
 
@@ -160,8 +161,22 @@ def limit_settings() -> dict[str, str]:
             "TASK_TIME_LIMIT_MIN": setting("task_time_limit_min")}
 
 
+NOTIFY_KEYS = {"telegram_token": "NOTIFY_TELEGRAM_TOKEN", "telegram_chat_id": "NOTIFY_TELEGRAM_CHAT_ID",
+               "webhook_url": "NOTIFY_WEBHOOK_URL"}
+
+
+def notify_settings() -> dict[str, str]:
+    """Notifications from the wizard (the bot token and the webhook URL are secrets: never sent to the browser
+    nor to the workers); .env wins over them."""
+    return {v: setting(f"notify_{k}") for k, v in NOTIFY_KEYS.items()}
+
+
+def notify_cfg() -> dict[str, str]:
+    return {k: env(v).strip() for k, v in NOTIFY_KEYS.items()}
+
+
 def apply_settings() -> None:
-    values = {**model_settings(), **limit_settings()}
+    values = {**model_settings(), **limit_settings(), **notify_settings()}
     for r in TEAM_ROLES:
         values.update(role_settings(r))     # the lead reports every role's model; it uses only its own key
     set_overrides({k: v for k, v in values.items() if v})
@@ -672,6 +687,38 @@ def build_report(task_id: str, since_event: int = 0) -> str:
     return "\n".join(L)
 
 
+def notify_done(task_id: str, since_event: int, report: str = "") -> None:
+    """Telegram / webhook message when a run ends. Never raises; the result is written into the feed."""
+    cfg = notify_cfg()
+    if not notify.channels(cfg):
+        return
+    t = get_task(task_id)
+    if t["status"] in ("cancelled", "running", "queued"):     # Stop: the user is right there
+        return
+    text, payload = notify.build(t, spent(task_id, since_event), ui_lang())
+    payload["report"] = report
+    res = notify.send(cfg, text, payload)
+    sent = [c for c, err in res.items() if not err]
+    if sent:
+        lead_say(task_id, "notify", "🔔 notification sent: " + ", ".join(sent))
+    for c, err in res.items():
+        if err:
+            lead_say(task_id, "warn", f"🔔 notification ({c}) failed: {err}")
+
+
+def finish_run(task_id: str, since_event: int) -> None:
+    """End of every run: the plain-text report, then the notifications."""
+    rep_ = ""
+    try:
+        rep_ = save_report(task_id, since_event)
+    except Exception as e:  # noqa: BLE001
+        lead_say(task_id, "warn", f"report: {e}")
+    try:
+        notify_done(task_id, since_event, rep_)
+    except Exception as e:  # noqa: BLE001
+        lead_say(task_id, "warn", f"🔔 notification failed: {e}")
+
+
 def save_report(task_id: str, since_event: int = 0) -> str:
     rep_ = build_report(task_id, since_event)
     if rep_:
@@ -796,10 +843,7 @@ def run_ci_only(task_id: str) -> None:
         lead_say(task_id, "error", f"💥 CI: {e}")
     finally:
         _end_run(task_id)
-        try:
-            save_report(task_id, _since)
-        except Exception as e:
-            lead_say(task_id, "warn", f"report: {e}")
+        finish_run(task_id, _since)
 
 
 def _last_event_id(task_id: str) -> int:
@@ -968,10 +1012,7 @@ def run_pipeline(task_id: str, followup: str = "") -> None:
             lead_say(task_id, "error", f"💥 {e}" + (f"\n{h}" if h else "") + f"\n{traceback.format_exc()[-2500:]}")
     finally:
         _end_run(task_id)
-        try:
-            save_report(task_id, _since)
-        except Exception as e:
-            lead_say(task_id, "warn", f"report: {e}")
+        finish_run(task_id, _since)
 
 
 # ------------------------------------------------------------------ API
@@ -1240,7 +1281,48 @@ async def setup_status():
         "ui": {"password_set": bool((env("UI_USER") and env("UI_PASSWORD")) or setting("ui_hash")),
                "from_env": bool(env("UI_USER") and env("UI_PASSWORD")), "user": setting("ui_user") or env("UI_USER")},
         "limits": _limits_status(),
+        "notify": _notify_status(),
     }
+
+
+def _notify_status() -> dict:
+    """What the wizard may show: never the bot token nor the full webhook URL (it can carry a key)."""
+    c = notify_cfg()
+    return {"telegram": bool(c["telegram_token"] and c["telegram_chat_id"]), "has_token": bool(c["telegram_token"]),
+            "telegram_chat_id": c["telegram_chat_id"], "webhook": bool(c["webhook_url"]),
+            "webhook_host": notify.webhook_host(c["webhook_url"]),
+            "from_env": {k: bool(os.environ.get(v, "").strip()) for k, v in NOTIFY_KEYS.items()}}
+
+
+class SetupNotify(BaseModel):
+    action: str = "save"            # save | test | off
+    telegram_token: str = ""        # empty = keep the saved one
+    telegram_chat_id: str = ""
+    webhook_url: str = ""           # empty = keep the saved one
+    lang: str = ""
+
+
+@app.post("/api/setup/notify", dependencies=[Depends(auth)])
+def setup_notify(body: SetupNotify):
+    """Notifications: save, send a test message (with the form's values, the saved secrets as fallback), turn off."""
+    if body.action == "off":
+        save_settings({f"notify_{k}": "" for k in NOTIFY_KEYS})
+        return {"ok": True, **_notify_status()}
+    saved = notify_cfg()
+    cfg = {"telegram_token": body.telegram_token.strip() or saved["telegram_token"],
+           "telegram_chat_id": body.telegram_chat_id.strip() or saved["telegram_chat_id"],
+           "webhook_url": body.webhook_url.strip() or saved["webhook_url"]}
+    if cfg["webhook_url"] and not cfg["webhook_url"].startswith(("http://", "https://")):
+        return {"ok": False, "code": "bad_url", **_notify_status()}
+    if body.action == "test":
+        if not notify.channels(cfg):
+            return {"ok": False, "code": "missing", **_notify_status()}
+        res = notify.send(cfg, *notify.probe_message(_lang(body.lang)))
+        return {"ok": all(not e for e in res.values()), "results": res, **_notify_status()}
+    save_settings({"notify_telegram_token": body.telegram_token.strip() or setting("notify_telegram_token"),
+                   "notify_telegram_chat_id": body.telegram_chat_id.strip(),
+                   "notify_webhook_url": body.webhook_url.strip() or setting("notify_webhook_url")})
+    return {"ok": True, **_notify_status()}
 
 
 def _limits_status() -> dict:

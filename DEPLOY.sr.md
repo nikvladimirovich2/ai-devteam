@@ -100,6 +100,21 @@ se odbija, a sledeći poziv modela se prekida, pa se zadatak završava kao «can
 modelu koji je već poslat se ne prekida — prvo se završi (ili dostigne `LLM_TIMEOUT`). Vremensko ograničenje zaustavlja
 tim na isti način.
 
+### Obaveštenja
+
+Kada se pokretanje zadatka završi (gotovo, nije objavljeno, CI pao, greška, budžet potrošen, vremensko ograničenje —
+ali ne posle Stop), vođa tima može da pošalje poruku: naziv, status, link ka repozitorijumu, cenu i kratak rezime.
+Podešava se u `⚙ Setup` → *Notifications* (tu je i dugme «Send test») ili u `.env`:
+
+| Promenljiva | Značenje |
+|---|---|
+| `NOTIFY_TELEGRAM_TOKEN` | token Telegram bota od [@BotFather](https://t.me/BotFather); prvo pošaljite botu `/start` |
+| `NOTIFY_TELEGRAM_CHAT_ID` | vaš chat id (pokazuje ga [@userinfobot](https://t.me/userinfobot)) ili ID grupe u kojoj je bot |
+| `NOTIFY_WEBHOOK_URL` | bilo koja adresa koja prima `POST` sa JSON-om: `event`, `task_id`, `title`, `status`, `status_text`, `repository`, `cost_usd`, `tokens`, `summary`, `report` (tekstualni izveštaj) i `text` (prikazuju ga dolazni webhook-ovi Slack / Mattermost) |
+
+Token i adresu webhook-a čuva samo vođa tima (volume `leaddata`), nikada se ne šalju u browser ni agentima. Ako
+obaveštenje ne uspe, zadatak se ne kvari: greška se vidi u feed-u zadatka. E-mail još nije podržan.
+
 > **`$` u vrednostima.** Compose razvija `$VAR` unutar `.env`. Ključ koji sadrži `$` mora biti u jednostrukim navodnicima:
 > `QA_API_KEY='$abc#def'`, inače se deo ključa tiho odbacuje.
 

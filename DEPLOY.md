@@ -101,6 +101,22 @@ tool call is refused and the agent's next model call is aborted, so the task end
 model request that is already in flight is not cut off — it finishes (or hits `LLM_TIMEOUT`) first. The time limit
 stops the team the same way.
 
+### Notifications
+
+When a task run ends (done, not published, CI failed, error, budget used up, time limit — not after Stop) the lead
+can send a message: the title, the status, the repository link, the cost and a short summary. Set it up in
+⚙ Setup → *Notifications* (with a «Send test» button) or in `.env`:
+
+| Variable | Meaning |
+|---|---|
+| `NOTIFY_TELEGRAM_TOKEN` | Telegram bot token from [@BotFather](https://t.me/BotFather); write `/start` to the bot first |
+| `NOTIFY_TELEGRAM_CHAT_ID` | your chat id ([@userinfobot](https://t.me/userinfobot) shows it) or the id of a group the bot is in |
+| `NOTIFY_WEBHOOK_URL` | any URL that accepts `POST` with JSON: `event`, `task_id`, `title`, `status`, `status_text`, `repository`, `cost_usd`, `tokens`, `summary`, `report` (plain-text report) and `text` (shown by Slack / Mattermost incoming webhooks) |
+
+The token and the webhook URL are kept by the lead only (volume `leaddata`), are never sent to the browser or to the
+agents. A notification that fails does not break the task: the error is shown in the task's feed. E-mail is not
+supported yet.
+
 > **`$` in values.** Compose expands `$VAR` inside `.env`. A key containing `$` must be in single quotes:
 > `QA_API_KEY='$abc#def'`, otherwise part of it is silently dropped.
 

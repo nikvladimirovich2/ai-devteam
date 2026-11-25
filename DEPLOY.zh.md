@@ -99,6 +99,20 @@ $EDITOR .env
 调用也会被中止，因此任务会在几秒内以 «cancelled» 结束。已经发出的模型请求不会被切断——它会先完成（或达到
 `LLM_TIMEOUT`）。时间限制以同样的方式停止团队。
 
+### 通知
+
+任务运行结束时（完成、未发布、CI 失败、出错、预算用完、超时——按 Stop 停止的除外），团队负责人可以发送一条消息：
+标题、状态、仓库链接、费用和简短总结。可在 `⚙ Setup` → *Notifications* 中设置（那里有 «Send test» 按钮），或在 `.env` 中设置：
+
+| 变量 | 含义 |
+|---|---|
+| `NOTIFY_TELEGRAM_TOKEN` | 来自 [@BotFather](https://t.me/BotFather) 的 Telegram 机器人令牌；请先给机器人发送 `/start` |
+| `NOTIFY_TELEGRAM_CHAT_ID` | 你的 chat id（[@userinfobot](https://t.me/userinfobot) 会显示）或机器人所在群组的 ID |
+| `NOTIFY_WEBHOOK_URL` | 任何接受 JSON `POST` 的地址：`event`、`task_id`、`title`、`status`、`status_text`、`repository`、`cost_usd`、`tokens`、`summary`、`report`（纯文本报告）以及 `text`（Slack / Mattermost 传入 webhook 会显示它） |
+
+令牌和 webhook 地址只由团队负责人保存（卷 `leaddata`），从不发送给浏览器或智能体。通知发送失败不会影响任务：错误会显示在
+任务的动态中。暂不支持电子邮件。
+
 > **值中的 `$`。** Compose 会展开 `.env` 中的 `$VAR`。包含 `$` 的密钥必须用单引号括起来：
 > `QA_API_KEY='$abc#def'`，否则其中一部分会被悄无声息地丢弃。
 

@@ -57,6 +57,13 @@ r=$(post /api/setup/git '{"provider":"gitlab","url":"http://no-such-git.invalid"
 echo "git: $r"
 [[ $(json 'd["code"]' <<<"$r") == unreachable ]] || fail "git check of a missing host should say unreachable"
 grep -q "Сервер не отвечает" <<<"$r" || fail "no Russian message"
+# notifications: a webhook (the mock LLM records it); the URL carries a key and must never come back
+r=$(post /api/setup/notify '{"action":"test","webhook_url":"http://mockllm:9000/hook?key=smoke-hook-secret"}')
+echo "notify test: $r"
+[[ $(json 'd["ok"]' <<<"$r") == True ]] || fail "notification test"
+post /api/setup/notify '{"action":"save","webhook_url":"http://mockllm:9000/hook?key=smoke-hook-secret"}' >/dev/null
+curl -fs "$B/api/setup" | grep -q "smoke-hook-secret" && fail "the webhook URL is returned by /api/setup"
+[[ $(curl -fs "$B/api/setup" | json 'd["notify"]["webhook"]') == True ]] || fail "webhook not saved"
 
 echo "== one task through every role"
 TID=$(post /api/tasks '{"prompt":"Tiny TODO API (smoke test)"}' | json 'd["id"]')
@@ -73,6 +80,13 @@ grep -q "backend/test_app.py" <<<"$report" || fail "backend file missing"
 grep -E "^ +Architect .*hosted_vllm/mock-architect$" <<<"$report" >/dev/null || fail "report: architect model"
 grep -E "^ +Backend .*hosted_vllm/mock$" <<<"$report" >/dev/null || fail "report: backend model"
 [[ $(curl -fs "$B/api/tasks/$TID" | json 'd["tokens"] > 0') == True ]] || fail "no tokens counted for the task"
+for i in $(seq 1 10); do      # the notification is sent right after the status changes
+  hooks=$(docker exec devteam-mockllm curl -fs http://localhost:9000/hooks)
+  grep -q "$TID" <<<"$hooks" && break
+  sleep 2
+done
+python3 -c "import json,sys; h=json.load(sys.stdin); t=[x for x in h if x.get('task_id')=='$TID']; assert t and t[0]['status']=='done_no_push' and t[0]['report'], h" <<<"$hooks" \
+  || fail "no webhook notification for the task: $hooks"
 
 echo "== budget: a run stops cleanly when the limit is used up"
 r=$(post /api/setup/limits '{"budget_tokens":"1"}')
