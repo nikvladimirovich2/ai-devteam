@@ -2,7 +2,7 @@
 
 Format: [Keep a Changelog](https://keepachangelog.com/), versions: [SemVer](https://semver.org/).
 
-## [Unreleased]
+## [0.3.0] - 2026-11-25
 
 ### Added
 - The whole interface is in English and Russian, not only the setup wizard: task list, buttons, statuses, filters,
