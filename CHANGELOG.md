@@ -2,7 +2,7 @@
 
 Format: [Keep a Changelog](https://keepachangelog.com/), versions: [SemVer](https://semver.org/).
 
-## [Unreleased]
+## [0.3.1] - 2026-11-26
 
 ### Fixed
 - A self-hosted model (observed with vLLM `--tool-call-parser hermes` + Qwen3) can intermittently write a tool
