@@ -763,6 +763,7 @@ Make a plan. Answer STRICTLY with a single JSON object, no other text:
 def ci_loop(task_id: str, name: str, summary: str, ctx: str) -> dict:
     """Wait for CI of the last pushed commit; on failure hand logs to DevOps, re-push, repeat."""
     t = get_task(task_id)
+    pdir = pathlib.Path(t["project_dir"])
     plan = {"summary": summary}
     ci: dict = {}
     for rnd in range(MAX_CI_ROUNDS + 1):
@@ -792,6 +793,7 @@ def ci_loop(task_id: str, name: str, summary: str, ctx: str) -> dict:
             break
         logs = "\n\n".join(f"=== job {j['name']} (stage {j.get('stage') or '-'}) ===\n{j['log_tail']}"
                              for j in jobs)[-14000:]
+        before = project_snapshot(pdir)
         call_worker(task_id, "devops", f"fixing CI (round {rnd + 1})",
             "The CI pipeline in the repository FAILED. Below are the logs of the failed jobs.\n"
             "1) Find the root cause from the log (missing dependency, wrong command/path, "
@@ -802,6 +804,13 @@ def ci_loop(task_id: str, name: str, summary: str, ctx: str) -> dict:
             f"4) Make sure everything passes locally and call publish_repository with project_name='{name}' "
             "and commit_message 'fix(ci): <what was fixed>'.\n\n" + logs,
             ctx, expected="What was the cause, what was fixed, local check result")
+        after = project_snapshot(pdir)
+        if after == before:
+            used = _worker_tools.get((task_id, "devops"))
+            calls = ", ".join(f"{k}×{v}" for k, v in sorted((used or {}).items())) or "none"
+            lead_say(task_id, "warn", f"🔎 devops: no file changed while fixing CI (tools called: {calls}). "
+                                       "Either the fix needed no code change (unlikely for a failing pipeline), "
+                                       "or the model described the fix in text instead of calling a tool.")
         if _last_pushed_sha(task_id) == sha:
             lead_say(task_id, "warn", "DevOps did not push the fix — publishing directly")
             try:

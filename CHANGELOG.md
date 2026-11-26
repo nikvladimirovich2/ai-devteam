@@ -2,6 +2,20 @@
 
 Format: [Keep a Changelog](https://keepachangelog.com/), versions: [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+- A self-hosted model (observed with vLLM `--tool-call-parser hermes` + Qwen3) can intermittently write a tool
+  call as plain text (`<tool_call>{...}</tool_call>`) instead of calling it; every role now recovers this
+  automatically (one `litellm.completion`/`acompletion` patch) instead of failing the whole run, and logs a
+  visible `⚠ the model wrote a tool call as text...` note so the frequency is visible. Found and reported by the
+  owner's real end-to-end test on a self-hosted Qwen3-32B-AWQ server (#17).
+- `scripts/check.sh` step 4 (LLM tool calling) now calls `common.build_llm()` before the test request, so it
+  applies the same `LLM_SSL_VERIFY_DISABLE` / CA bundle settings production uses; it used to report "no tool
+  calling support" on a self-signed self-hosted server purely because of an unverified TLS error.
+- The CI-fix loop now logs when DevOps changed no file while "fixing" a failing pipeline (tool calls made, or
+  none), making a silent non-fix visible instead of only showing "no new commit" after a wasted round.
+
 ## [0.3.0] - 2026-11-25
 
 ### Added

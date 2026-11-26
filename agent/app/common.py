@@ -6,6 +6,7 @@ import hmac
 import json
 import os
 import pathlib
+import re
 import signal
 import subprocess
 import threading
@@ -28,6 +29,87 @@ for _m in ("litellm.types.secret_managers.main", "litellm.rust_bridge.catalog",
         __import__(_m)
     except Exception:
         pass
+
+
+# ---------------------------------------------------------------- text tool-call fallback
+#
+# Some self-hosted servers (observed with vLLM's --tool-call-parser hermes + Qwen3, see
+# ai-devteam-test-report.md 2026-11-26) intermittently return a well-formed tool call as plain
+# text instead of a structured tool_calls entry, e.g.:
+#   <tool_call>
+#   {"name": "write_file", "arguments": {"path": "ARCHITECTURE.md", "content": "..."}}
+#   </tool_call>
+# CrewAI's LLM._handle_non_streaming_response() then treats it as the agent's final answer: no
+# tool runs, the lead sees "no files changed and no tools called" and the whole run fails, even
+# though the SAME prompt against the SAME model often returns a proper tool call a moment later.
+# Recovering it here (where every completion call passes through) covers every role and every
+# code path (sync/async) without touching CrewAI's prompting or AgentExecutor loop.
+_TOOL_CALL_TAG = re.compile(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", re.DOTALL)
+_recovered_text_tool_calls = 0
+
+
+def _recover_text_tool_call(response: Any) -> None:
+    """If choices[0].message has no tool_calls but its text contains a <tool_call>{...}</tool_call>
+    block, parse the first one and set it as a real tool_calls entry, in place. Only the first
+    one matters: CrewAI's _handle_tool_call only ever executes tool_calls[0] (a real native call
+    is one tool per turn too), so the agent loop asks again for the next step as usual."""
+    global _recovered_text_tool_calls
+    try:
+        choices = getattr(response, "choices", None)
+        if not choices:
+            return
+        message = choices[0].message
+        if getattr(message, "tool_calls", None):
+            return
+        content = getattr(message, "content", None) or ""
+        m = _TOOL_CALL_TAG.search(content)
+        if not m:
+            return
+        call = json.loads(m.group(1))
+        name = call.get("name") or call.get("function", {}).get("name")
+        args = call.get("arguments", call.get("function", {}).get("arguments", {}))
+        if not name:
+            return
+        if not isinstance(args, str):
+            args = json.dumps(args)
+        from litellm.types.utils import ChatCompletionMessageToolCall, Function
+        message.tool_calls = [ChatCompletionMessageToolCall(
+            id=f"recovered-{_recovered_text_tool_calls}", type="function",
+            function=Function(name=name, arguments=args),
+        )]
+        _recovered_text_tool_calls += 1
+        print(f"[tool-call-fallback] recovered a text tool call: {name} (total so far: {_recovered_text_tool_calls})", flush=True)
+        try:
+            emit("warn", f"⚠ the model wrote a tool call as text instead of calling it; recovered: {name}")
+        except Exception:
+            pass
+    except Exception as e:  # noqa: BLE001 - never let the fallback itself break a call
+        print(f"[tool-call-fallback] could not recover a text tool call: {e}", flush=True)
+
+
+def _patch_text_tool_call_fallback() -> None:
+    """Wrap litellm.completion/acompletion once so every CrewAI LLM call (every role) benefits."""
+    if getattr(litellm, "_devteam_tool_call_fallback", False):
+        return
+    litellm._devteam_tool_call_fallback = True
+    _orig_completion = litellm.completion
+    _orig_acompletion = litellm.acompletion
+
+    def _completion(*args: Any, **kwargs: Any) -> Any:
+        response = _orig_completion(*args, **kwargs)
+        _recover_text_tool_call(response)
+        return response
+
+    async def _acompletion(*args: Any, **kwargs: Any) -> Any:
+        response = await _orig_acompletion(*args, **kwargs)
+        _recover_text_tool_call(response)
+        return response
+
+    litellm.completion = _completion
+    litellm.acompletion = _acompletion
+
+
+_patch_text_tool_call_fallback()
 litellm.suppress_debug_info = True
 
 from crewai import LLM  # noqa: E402

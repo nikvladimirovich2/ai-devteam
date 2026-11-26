@@ -72,6 +72,11 @@ done
 echo "4) LLM tool calling (native)"
 out=$(docker exec -w /app devteam-backend timeout 180 python -c '
 import os, litellm, common
+# build_llm() applies the SAME ssl_verify / CA bundle / base_url / timeout logic production uses
+# (it is the whole point of this check); calling litellm.completion() directly without it skips
+# LLM_SSL_VERIFY_DISABLE, so a self-signed self-hosted server fails with a misleading SSL error
+# that this test used to report as "no tool calling support".
+common.build_llm()
 m, base = os.environ["LLM_MODEL"], os.environ.get("LLM_BASE_URL") or None
 key = os.environ.get("BACKEND_API_KEY") or os.environ.get("LLM_API_KEY") or "none"
 tools=[{"type":"function","function":{"name":"write_file","description":"write a file","parameters":{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}}}]

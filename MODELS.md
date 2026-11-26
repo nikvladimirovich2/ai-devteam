@@ -40,6 +40,15 @@ All roles on one model. Qwen3-32B: good tool calling via `--tool-call-parser her
 Turn off long «thinking» if the server supports it (`/no_think` or `enable_thinking=false`) — it noticeably
 speeds up Backend/Frontend.
 
+> **vLLM `--tool-call-parser hermes` + Qwen3: occasionally unstable on long system prompts.** The model can
+> intermittently print a tool call as plain text (`<tool_call>{"name": ..., "arguments": {...}}</tool_call>`)
+> instead of a real structured call, with the same prompt sometimes calling the tool correctly and sometimes
+> not. ai-devteam recovers this automatically (every role, every tool: the agent's work continues normally and
+> a `⚠ the model wrote a tool call as text...` note appears in the task log so you can see how often it
+> happens), but it is still worth knowing: if you see that note often, check your vLLM version and
+> `--enable-auto-tool-choice --tool-call-parser hermes` flags, and look for open issues about the hermes
+> parser + Qwen3 in `vllm-project/vllm`.
+
 ### B. Two models: coder + reasoning (best quality/cost)
 
 ```env
