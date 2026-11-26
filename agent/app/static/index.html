@@ -28,10 +28,10 @@
   .s-running,.s-queued { color:var(--warn) } .s-done { color:var(--ok) } .s-failed,.s-cancelled,.s-interrupted { color:var(--bad) }
   .s-done_no_push { color:var(--warn) } .s-ci_failed, .s-budget, .s-timeout { color:var(--bad) }
   .ev.k-ci { border-left-color:var(--warn) }
-  #center { display:grid; grid-template-rows:auto 1fr auto; min-height:0 }
+  #center { display:grid; grid-template-rows:auto 1fr auto; min-height:0; min-width:0 }
   #head { padding:10px 16px; border-bottom:1px solid var(--line) }
   #head .stage { color:var(--mute); font-size:12px }
-  #log { overflow:auto; padding:10px 16px }
+  #log { overflow:auto; padding:10px 16px; min-width:0 }
   .ev { margin:6px 0; padding:8px 10px; border-radius:8px; background:var(--panel); border-left:3px solid var(--line);
         white-space:pre-wrap; word-break:break-word }
   .ev .h { font-size:11px; color:var(--mute); margin-bottom:2px }
@@ -40,7 +40,7 @@
   .ev.k-shell, .ev.k-step, .ev.k-thought, .ev.k-file { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12px; opacity:.85 }
   .ev.k-final { border-left-color:var(--ok); background:#13221a }
   .ev.k-report { border-left-color:var(--acc); background:#0d1420; font-family:ui-monospace,Menlo,Consolas,monospace;
-                 font-size:12px; white-space:pre; overflow-x:auto }
+                 font-size:12px; white-space:pre-wrap; overflow-x:auto }
   .ev.k-usage { font-family:ui-monospace,monospace; font-size:12px; opacity:.75 }
   .r-architect{color:#79c0ff}.r-backend{color:#ffa657}.r-frontend{color:#ff7b72}.r-qa{color:#d2a8ff}.r-devops{color:#56d364}.r-lead{color:#a371f7}.r-user{color:var(--acc)}
   form { display:flex; gap:8px; padding:10px 16px; border-top:1px solid var(--line) }
